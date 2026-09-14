@@ -80,12 +80,9 @@ int main(void)
     //   and then execute them.
 
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
-    while (1)
-    {
+    while(1){
         int ch = bios_getchar();
-
-        if (ch != -1)
-        {
+        if(ch != -1){
             bios_putchar(ch);
         }
     }
