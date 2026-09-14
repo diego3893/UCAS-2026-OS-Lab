@@ -82,7 +82,12 @@ int main(void)
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
     while (1)
     {
-        asm volatile("wfi");
+        int ch = bios_getchar();
+
+        if (ch != -1)
+        {
+            bios_putchar(ch);
+        }
     }
 
     return 0;
