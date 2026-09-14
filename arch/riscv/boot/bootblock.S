@@ -17,7 +17,9 @@ main:
 	fence
 
 	// TODO: [p1-task1] call BIOS to print string "It's bootblock!"
-
+	li a7, 9 
+	la a0, msg
+	jal bios_func_entry
 
 	// TODO: [p1-task2] call BIOS to read kernel in SD card
 
@@ -37,5 +39,5 @@ stop:
 
 .data
 
-msg: .string "It's a bootloader...\n\r"
+msg: .string "It's zhangchenxuan's bootloader...\n\r"
 
