@@ -7,6 +7,7 @@
 #include <type.h>
 
 #define VERSION_BUF 50
+#define TASK_NUM_ADDR 0x502001fa
 
 int version = 2; // version must between 0 and 9
 char buf[VERSION_BUF];
@@ -80,11 +81,33 @@ int main(void)
     //   and then execute them.
 
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
+    // while(1){
+    //     int ch = bios_getchar();
+    //     if(ch != -1){
+    //         bios_putchar(ch);
+    //     }
+    // }
+    int tasknum = *(volatile unsigned short*)TASK_NUM_ADDR;
     while(1){
         int ch = bios_getchar();
-        if(ch != -1){
-            bios_putchar(ch);
+        if(ch == -1){
+            continue;
         }
+        bios_putchar(ch);
+        if(ch<'0' || ch>'9'){
+            continue;
+        }
+        int taskid = ch-'0';
+        if (taskid >= tasknum)
+        {
+            bios_putstr("\n\rInvalid task id\n\r");
+            continue;
+        }
+
+        uint64_t entry_addr = load_task_img(taskid);
+        void (*task_entry)(void) = (void (*)(void))entry_addr;
+        task_entry();
+        bios_putstr("\n\rTask finished\n\r");
     }
 
     return 0;

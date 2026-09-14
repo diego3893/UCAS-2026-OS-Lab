@@ -12,10 +12,13 @@
 #define SECTOR_SIZE 512
 #define BOOT_LOADER_SIG_OFFSET 0x1fe
 #define OS_SIZE_LOC (BOOT_LOADER_SIG_OFFSET - 2)
+#define TASK_NUM_LOC (OS_SIZE_LOC-2)
 #define BOOT_LOADER_SIG_1 0x55
 #define BOOT_LOADER_SIG_2 0xaa
 
 #define NBYTES2SEC(nbytes) (((nbytes) / SECTOR_SIZE) + ((nbytes) % SECTOR_SIZE != 0))
+
+#define TASK_SIZE 0x10000
 
 /* TODO: [p1-task4] design your own task_info_t */
 typedef struct {
@@ -127,9 +130,25 @@ static void create_image(int nfiles, char *files[])
          *  occupies the same number of sectors
          * 2. [p1-task4] only padding bootblock is allowed!
          */
-        if (strcmp(*files, "bootblock") == 0) {
-            write_padding(img, &phyaddr, SECTOR_SIZE);
+        // if (strcmp(*files, "bootblock") == 0) {
+        //     write_padding(img, &phyaddr, SECTOR_SIZE);
+        // }
+
+        // task3: 补0
+        int new_phyaddr;
+        if(fidx == 0){
+            new_phyaddr = SECTOR_SIZE;
+        }else{
+            new_phyaddr = SECTOR_SIZE+fidx*TASK_SIZE;
         }
+        if(fidx==0 && phyaddr>TASK_NUM_LOC){
+            error("bootblock is too large for image metadata\n");
+        }
+        if(phyaddr > new_phyaddr){
+            error("%s is larger than its reserved area\n", *files);
+        }
+
+        write_padding(img, &phyaddr, new_phyaddr);
 
         fclose(fp);
         files++;
@@ -215,6 +234,20 @@ static void write_img_info(int nbytes_kernel, task_info_t *taskinfo,
 {
     // TODO: [p1-task3] & [p1-task4] write image info to some certain places
     // NOTE: os size, infomation about app-info sector(s) ...
+    unsigned short kernel_sectors = NBYTES2SEC(nbytes_kernel);
+
+    // 写APP数量
+    fseek(img, TASK_NUM_LOC, SEEK_SET);
+    fwrite(&tasknum, sizeof(tasknum), 1, img);
+
+    // 写kernel大小
+    fseek(img, OS_SIZE_LOC, SEEK_SET);
+    fwrite(&kernel_sectors, sizeof(kernel_sectors), 1, img);
+
+    // 写启动签名
+    fseek(img, BOOT_LOADER_SIG_OFFSET, SEEK_SET);
+    fputc(BOOT_LOADER_SIG_1, img);
+    fputc(BOOT_LOADER_SIG_2, img);
 }
 
 /* print an error message and exit */
