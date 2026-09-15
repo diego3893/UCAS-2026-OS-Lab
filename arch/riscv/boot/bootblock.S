@@ -9,6 +9,12 @@
 // BIOS function entry (jump here to use BIOS APIs)
 .equ bios_func_entry, 0x50150000
 
+// App Info
+.equ app_info_offset_loc, 0x502001f4
+
+// APP数量
+.equ task_num_loc, 0x502001fa
+
 .text
 .global main
 
@@ -31,7 +37,10 @@ main:
 
 
 	// TODO: [p1-task4] load task-related arguments and pass them to kernel
-
+	li t0, app_info_offset_loc
+	lwu a0, 0(t0)
+	li t0, task_num_loc
+	lhu a1, 0(t0)
 
 	// TODO: [p1-task2] jump to kernel to start UCAS-OS
 	j kernel

@@ -37,17 +37,56 @@ static void init_jmptab(void)
     jmptab[SD_READ]         = (long (*)())sd_read;
 }
 
-static void init_task_info(void)
+static int init_task_info(uint32_t app_info_offset, int tasknum)
 {
     // TODO: [p1-task4] Init 'tasks' array via reading app-info sector
     // NOTE: You need to get some related arguments from bootblock first
+    if(tasknum<=0 || tasknum>TASK_MAXNUM){
+        return 0;
+    }
+
+    uint32_t info_size = tasknum*sizeof(task_info_t);
+    uint32_t block_id = app_info_offset/SECTOR_SIZE;
+    uint32_t block_offset = app_info_offset%SECTOR_SIZE;
+    uint32_t info_sectors = NBYTES2SEC(block_offset+info_size);
+
+    bios_sd_read(TASK_BUFFER_BASE, info_sectors, block_id);
+    memcpy((uint8_t*)tasks, (uint8_t*)(TASK_BUFFER_BASE+block_offset), info_size);
+
+    return tasknum;
+}
+
+static void read_task_name(char *taskname){
+    int len = 0;
+    while(1){
+        int ch = bios_getchar();
+        if(ch == -1){
+            continue;
+        }
+        if(ch=='\r' || ch=='\n'){
+            taskname[len] = '\0';
+            bios_putstr("\n\r");
+            return;
+        }
+        if(ch=='\b' || ch==127){
+            if(len>0){
+                len--;
+                bios_putstr("\b \b");
+            }
+            continue;
+        }
+        if(len < TASK_NAME_LEN-1){
+            taskname[len++] = ch;
+            bios_putchar(ch);
+        }
+    }
 }
 
 /************************************************************/
 /* Do not touch this comment. Reserved for future projects. */
 /************************************************************/
 
-int main(void)
+int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
 {
     // Check whether .bss section is set to zero
     int check = bss_check();
@@ -56,7 +95,7 @@ int main(void)
     init_jmptab();
 
     // Init task information (〃'▽'〃)
-    init_task_info();
+    int tasknum = init_task_info((uint32_t)app_info_offset, (int)tasknum_from_boot);
 
     // Output 'Hello OS!', bss check result and OS version
     char output_str[] = "bss check: _ version: _\n\r";
@@ -87,24 +126,34 @@ int main(void)
     //         bios_putchar(ch);
     //     }
     // }
-    int tasknum = *(volatile unsigned short*)TASK_NUM_ADDR;
     while(1){
-        int ch = bios_getchar();
-        if(ch == -1){
-            continue;
-        }
-        bios_putchar(ch);
-        if(ch<'0' || ch>'9'){
-            continue;
-        }
-        int taskid = ch-'0';
-        if (taskid >= tasknum)
-        {
-            bios_putstr("\n\rInvalid task id\n\r");
-            continue;
-        }
+        // int ch = bios_getchar();
+        // if(ch == -1){
+        //     continue;
+        // }
+        // bios_putchar(ch);
+        // if(ch<'0' || ch>'9'){
+        //     continue;
+        // }
+        // int taskid = ch-'0';
+        // if (taskid >= tasknum)
+        // {
+        //     bios_putstr("\n\rInvalid task id\n\r");
+        //     continue;
+        // }
 
-        uint64_t entry_addr = load_task_img(taskid);
+        // uint64_t entry_addr = load_task_img(taskid);
+        char taskname[TASK_NAME_LEN];
+
+        bios_putstr("Please input task name: ");
+        read_task_name(taskname);
+
+        uint64_t entry_addr = load_task_img(taskname, tasknum);
+
+        if(entry_addr == 0){
+            bios_putstr("Task not found\n\r");
+            continue;
+        }
         void (*task_entry)(void) = (void (*)(void))entry_addr;
         task_entry();
         bios_putstr("\n\rTask finished\n\r");
