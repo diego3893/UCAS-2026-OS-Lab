@@ -21,6 +21,8 @@
 | `0x50150000` | BIOS 功能统一入口 `bios_func_entry` |
 | `0x50200000` | Bootloader 装载地址 |
 | `0x502001fc` | Bootloader 中保存内核大小的字段地址 |
+| `0x502001fa` | Bootloader 中保存App数量的地址 |
+| `0x502001f4` | Bootloader 中保存 `app_info_offset`的地址 |
 | `0x50201000` | Kernel 装载地址和入口地址 |
 | `0x50500000` | Kernel 栈顶地址 |
 | `0x51ffff00` | Kernel Jump Table 地址 |
