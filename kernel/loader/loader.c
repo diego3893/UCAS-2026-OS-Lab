@@ -31,12 +31,17 @@ uint64_t load_task_img(const char *taskname, int tasknum){
 
     task_info_t *task = &tasks[taskid];
 
+    if(task->task_size==0 || task->task_size>TASK_SIZE){
+        return 0;
+    }
 
-    uint32_t block_id = task->task_offset/SECTOR_SIZE;
+    uint32_t relative_block = task->task_offset/SECTOR_SIZE;
     uint32_t block_offset = task->task_offset%SECTOR_SIZE;
+    uint32_t block_id = USER_IMAGE_START_SECTOR+relative_block;
     uint32_t task_sectors = NBYTES2SEC(block_offset+task->task_size);
 
     bios_sd_read(TASK_BUFFER_BASE, task_sectors, block_id);
+
     memcpy((uint8_t*)task->task_entry, (uint8_t*)(TASK_BUFFER_BASE+block_offset), task->task_size);
 
     return task->task_entry;

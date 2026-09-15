@@ -81,7 +81,11 @@ SRC_MAIN    = $(SRC_ARCH) $(SRC_INIT) $(SRC_BIOS) $(SRC_KERNEL) $(SRC_LIBS)
 
 ELF_BOOT    = $(DIR_BUILD)/bootblock
 ELF_MAIN    = $(DIR_BUILD)/main
-ELF_IMAGE   = $(DIR_BUILD)/image
+ELF_IMAGE    = $(DIR_BUILD)/image
+KERNEL_IMAGE = $(DIR_BUILD)/kernel_image
+USER_IMAGE   = $(DIR_BUILD)/user_image
+
+USER_IMAGE_START_SECTOR = 2048
 
 # -----------------------------------------------------------------------
 # UCAS-OS User Source Files
@@ -161,7 +165,12 @@ elf: $(ELF_BOOT) $(ELF_MAIN) $(ELF_USER)
 $(ELF_CREATEIMAGE): $(SRC_CREATEIMAGE)
 	$(HOST_CC) $(SRC_CREATEIMAGE) -o $@ -ggdb -Wall
 
+# image: $(ELF_CREATEIMAGE) $(ELF_BOOT) $(ELF_MAIN) $(ELF_USER)
+# 	cd $(DIR_BUILD) && ./$(<F) --extended $(filter-out $(<F), $(^F))
 image: $(ELF_CREATEIMAGE) $(ELF_BOOT) $(ELF_MAIN) $(ELF_USER)
 	cd $(DIR_BUILD) && ./$(<F) --extended $(filter-out $(<F), $(^F))
+	cp $(KERNEL_IMAGE) $(ELF_IMAGE)
+	dd if=$(USER_IMAGE) of=$(ELF_IMAGE) bs=512 \
+		seek=$(USER_IMAGE_START_SECTOR) conv=notrunc
 
 .PHONY: image

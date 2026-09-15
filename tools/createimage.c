@@ -7,7 +7,8 @@
 #include <string.h>
 #include <stdint.h>
 
-#define IMAGE_FILE "./image"
+#define KERNEL_IMAGE_FILE "./kernel_image"
+#define USER_IMAGE_FILE "./user_image"
 #define ARGS "[--extended] [--vm] <bootblock> <executable-file> ..."
 
 #define SECTOR_SIZE 512
@@ -90,8 +91,8 @@ static void create_image(int nfiles, char *files[])
 {
     int tasknum = nfiles - 2;
     int nbytes_kernel = 0;
-    int phyaddr = 0;
-    FILE *fp = NULL, *img = NULL;
+    int kernel_phyaddr = 0, user_phyaddr = 0;
+    FILE *fp = NULL, *kernel_img = NULL, *user_img = NULL;
     Elf64_Ehdr ehdr;
     Elf64_Phdr phdr;
 
@@ -101,8 +102,10 @@ static void create_image(int nfiles, char *files[])
     memset(taskinfo, 0, sizeof(taskinfo));
 
     /* open the image file */
-    img = fopen(IMAGE_FILE, "w");
-    assert(img != NULL);
+    kernel_img = fopen(KERNEL_IMAGE_FILE, "w");
+    user_img = fopen(USER_IMAGE_FILE, "w");
+    assert(kernel_img != NULL);
+    assert(user_img != NULL);
 
     /* for each input file */
     for (int fidx = 0; fidx < nfiles; ++fidx) {
@@ -116,8 +119,17 @@ static void create_image(int nfiles, char *files[])
         /* read ELF header */
         read_ehdr(&ehdr, fp);
         printf("0x%04lx: %s\n", ehdr.e_entry, *files);
+        FILE *target_img;
+        int *target_phyaddr;
+        if(fidx < 2){
+            target_img = kernel_img;
+            target_phyaddr = &kernel_phyaddr;
+        }else{
+            target_img = user_img;
+            target_phyaddr = &user_phyaddr;
+        }
 
-        uint32_t file_start = (uint32_t)phyaddr;
+        uint32_t file_start = (uint32_t)(*target_phyaddr);
 
         /* for each program header */
         for (int ph = 0; ph < ehdr.e_phnum; ph++) {
@@ -128,12 +140,12 @@ static void create_image(int nfiles, char *files[])
             if (phdr.p_type != PT_LOAD) continue;
 
             /* write segment to the image */
-            write_segment(phdr, fp, img, &phyaddr);
+            write_segment(phdr, fp, target_img, target_phyaddr);
 
             /* update nbytes_kernel */
-            if (strcmp(*files, "main") == 0) {
-                nbytes_kernel += get_filesz(phdr);
-            }
+            // if (strcmp(*files, "main") == 0) {
+            //     nbytes_kernel += get_filesz(phdr);
+            // }
         }
 
         /* write padding bytes */
@@ -161,14 +173,16 @@ static void create_image(int nfiles, char *files[])
         //     error("%s is larger than its reserved area\n", *files);
         // }
         // write_padding(img, &phyaddr, new_phyaddr);
-        // task4
-        uint32_t file_size = (uint32_t)phyaddr-file_start;
+        // task4&5
+        uint32_t file_size = (uint32_t)(*target_phyaddr)-file_start;
         if(fidx == 0){
-            if(fidx==0 && phyaddr>APP_INFO_OFFSET_LOC){
+            if(fidx==0 && kernel_phyaddr>APP_INFO_OFFSET_LOC){
                 error("bootblock is too large for image metadata\n");
             }
-            write_padding(img, &phyaddr, SECTOR_SIZE);
-        }else if(fidx != 1){
+            write_padding(kernel_img, &kernel_phyaddr, SECTOR_SIZE);
+        }else if(fidx == 1){
+            nbytes_kernel = (int)file_size;
+        }else{
             if(file_size > TASK_SIZE){
                 error("%s is larger than its memory area\n", *files);
             }
@@ -183,17 +197,21 @@ static void create_image(int nfiles, char *files[])
         fclose(fp);
         files++;
     }
-    uint32_t app_info_offset = (uint32_t)phyaddr;
+    uint32_t app_info_offset = (uint32_t)kernel_phyaddr;
 
-    fwrite(taskinfo, sizeof(task_info_t), tasknum, img);
-    phyaddr += sizeof(task_info_t)*tasknum;
+    fwrite(taskinfo, sizeof(task_info_t), tasknum, kernel_img);
+    kernel_phyaddr += sizeof(task_info_t)*tasknum;
 
-    int image_end = NBYTES2SEC(phyaddr)*SECTOR_SIZE;
-    write_padding(img, &phyaddr, image_end);
+    int kernel_image_end = NBYTES2SEC(kernel_phyaddr)*SECTOR_SIZE;
+    write_padding(kernel_img, &kernel_phyaddr, kernel_image_end);
 
-    write_img_info(nbytes_kernel, taskinfo, tasknum, app_info_offset, img);
+    int user_image_end = NBYTES2SEC(user_phyaddr)*SECTOR_SIZE;
+    write_padding(user_img, &user_phyaddr, user_image_end);
 
-    fclose(img);
+    write_img_info(nbytes_kernel, taskinfo, tasknum, app_info_offset, kernel_img);
+
+    fclose(kernel_img);
+    fclose(user_img);
 }
 
 static void read_ehdr(Elf64_Ehdr * ehdr, FILE * fp)
