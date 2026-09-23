@@ -153,7 +153,7 @@ Bootblock | Kernel | App 0 | App 1 | ... | App Info
 - [x] Task 4：
   - [x] 使用真实大小来生成image
   - [x] 使用App Name来启动App
-- [ ] Task 5：
-  - [ ] 将内核和App分两个image；内核镜像需要保存App相关信息
-  - [ ] 加载内核，只加载内核镜像，可以提供显示App的指令
-  - [ ] 启动App时从App镜像加载App
+- [x] Task 5：
+  - [x] 将内核和App分两个image；内核镜像需要保存App相关信息
+  - [x] 加载内核，只加载内核镜像，可以提供显示App的指令
+  - [x] 启动App时从App镜像加载App
