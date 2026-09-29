@@ -127,9 +127,8 @@ static void init_pcb(int tasknum)
 {
     /* TODO: [p2-task1] load needed tasks and init their corresponding PCB */
     static const char *task_names[] = {
-        "print1",
-        "print2",
-        "fly"
+        "lock1",
+        "lock2"
     };
 
     int task_count = sizeof(task_names)/sizeof(task_names[0]);

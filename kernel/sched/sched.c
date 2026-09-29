@@ -64,9 +64,21 @@ void do_sleep(uint32_t sleep_time)
 void do_block(list_node_t *pcb_node, list_head *queue)
 {
     // TODO: [p2-task2] block the pcb task into the block queue
+    pcb_t *task = list_entry(pcb_node, pcb_t, list);
+
+    task->status = TASK_BLOCKED;
+    list_add_tail(pcb_node, queue);
+
+    do_scheduler(); // 从队列删除block的PCB，并唤醒下一个READY的PCB
 }
 
 void do_unblock(list_node_t *pcb_node)
 {
     // TODO: [p2-task2] unblock the `pcb` from the block queue
+    pcb_t *task = list_entry(pcb_node, pcb_t, list);
+
+    list_del(pcb_node);
+
+    task->status = TASK_READY;
+    list_add_tail(pcb_node, &ready_queue);
 }
