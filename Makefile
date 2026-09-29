@@ -109,7 +109,9 @@ SRC_USER = $(DIR_TEST_PROJ)/print1.c \
            $(DIR_TEST_PROJ)/print2.c \
            $(DIR_TEST_PROJ)/fly.c \
 		   $(DIR_TEST_PROJ)/lock1.c \
-		   $(DIR_TEST_PROJ)/lock2.c
+		   $(DIR_TEST_PROJ)/lock2.c \
+		   $(DIR_TEST_PROJ)/sleep.c \
+		   $(DIR_TEST_PROJ)/timer.c
 ELF_USER    = $(patsubst %.c, %, $(foreach file, $(SRC_USER), $(DIR_BUILD)/$(notdir $(file))))
 
 # -----------------------------------------------------------------------

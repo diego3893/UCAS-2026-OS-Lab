@@ -16,6 +16,7 @@
 #include <assert.h>
 #include <type.h>
 #include <csr.h>
+#include <asm/regs.h>
 
 extern void ret_from_exception();
 
@@ -116,11 +117,24 @@ static void init_pcb_stack(
     memset(pt_regs, 0, sizeof(regs_context_t));
     memset(pt_switchto, 0, sizeof(switchto_context_t));
 
-    pt_switchto->regs[0] = entry_point; // 假现场的ra指向入口
+    pt_regs->regs[OFFSET_REG_SP>>3] = user_stack; // sp指向用户栈
+    pt_regs->regs[OFFSET_REG_TP>>3] = (reg_t)pcb; // tp = PCB地址
+    pt_regs->sepc = entry_point; // sret跳转到spec，初始化为入口
 
-    pt_switchto->regs[1] = user_stack-sizeof(switchto_context_t); // 预留假现场的栈空间
+    pt_regs->sstatus = SR_SPIE; // SPP置零，SPIE置1
+
+    pt_switchto->regs[SWITCH_TO_RA>>3] = (reg_t)ret_from_exception; // 通过sret返回U-Mode
+    pt_switchto->regs[SWITCH_TO_SP>>3] = (reg_t)pt_switchto; // pt_switchto+SWITCH_TO_SIZE=pt_regs，便于恢复用户现场
+
     pcb->kernel_sp = (ptr_t)pt_switchto;
     pcb->user_sp = user_stack;
+
+    // task1 code
+    // pt_switchto->regs[0] = entry_point; // 假现场的ra指向入口
+
+    // pt_switchto->regs[1] = user_stack-sizeof(switchto_context_t); // 预留假现场的栈空间
+    // pcb->kernel_sp = (ptr_t)pt_switchto;
+    // pcb->user_sp = user_stack;
 }
 
 static void init_pcb(int tasknum)
@@ -131,7 +145,9 @@ static void init_pcb(int tasknum)
         "print2",
         "fly",
         "lock1",
-        "lock2"
+        "lock2",
+        "sleep",
+        "timer"
     };
 
     int task_count = sizeof(task_names)/sizeof(task_names[0]);
@@ -179,6 +195,20 @@ static void init_pcb(int tasknum)
 static void init_syscall(void)
 {
     // TODO: [p2-task3] initialize system call table.
+    for(int i=0; i<NUM_SYSCALLS; ++i){
+        syscall[i] = 0;
+    }
+
+    syscall[SYSCALL_SLEEP] = (long (*)())do_sleep;
+    syscall[SYSCALL_YIELD] = (long (*)())do_scheduler;
+    syscall[SYSCALL_WRITE] = (long (*)())screen_write;
+    syscall[SYSCALL_CURSOR] = (long (*)())screen_move_cursor;
+    syscall[SYSCALL_REFLUSH] = (long (*)())screen_reflush;
+    syscall[SYSCALL_GET_TIMEBASE] = (long (*)())get_time_base;
+    syscall[SYSCALL_GET_TICK] = (long (*)())get_ticks;
+    syscall[SYSCALL_LOCK_INIT] = (long (*)())do_mutex_lock_init;
+    syscall[SYSCALL_LOCK_ACQ] = (long (*)())do_mutex_lock_acquire;
+    syscall[SYSCALL_LOCK_RELEASE] = (long (*)())do_mutex_lock_release;
 }
 /************************************************************/
 

@@ -121,6 +121,11 @@ void do_mutex_lock_acquire(int mlock_idx)
     }
 }
 
+/**
+ * @brief 释放互斥锁
+ * 
+ * @param mlock_idx 互斥锁下标
+ */
 void do_mutex_lock_release(int mlock_idx)
 {
     /* TODO: [p2-task2] release mutex lock */

@@ -327,89 +327,107 @@ typedef struct mutex_lock
 
 ## 7 系统调用和异常处理
 
-### 7.1 系统调用执行流程
+### 7.1 用户态、内核态和例外
 
-Task 3以后，用户程序运行在User Mode，不能再通过跳转表直接调用内核函数。计划采用以下流程：
+Task3开始后，应用运行在User Mode，内核运行在Supervisor Mode。用户程序不能再通过跳转表直接调用`do_scheduler`、`screen_write`等内核函数，而要执行`ecall`主动触发系统调用例外。CPU随后切换到Supervisor Mode，并跳转到内核设置的例外入口。
+
+RISC-V把异常和中断统称为Trap。系统调用属于由当前指令主动触发的同步异常；定时器中断则是由硬件异步触发的中断。Task3主要实现系统调用异常，Task4再打开定时器中断。
+
+### 7.2 系统调用的完整流程
+
+系统调用计划按照以下数据通路执行：
 
 ```text
 用户程序调用sys_write等API
-→tiny_libc中的invoke_syscall
-→把系统调用号和参数放入寄存器
+→invoke_syscall把参数放入a0～a4，把系统调用号放入a7
 →执行ecall
-→硬件切换到Supervisor Mode
-→跳转到stvec保存的exception_handler_entry
-→SAVE_CONTEXT保存用户态现场
-→interrupt_helper根据scause分发异常
-→handle_syscall调用对应内核函数
+→CPU将当前PC保存到sepc，并在scause中记录例外原因
+→CPU切换到Supervisor Mode，并跳转到stvec指向的exception_handler_entry
+→SAVE_CONTEXT在当前进程的内核栈中保存用户态现场
+→interrupt_helper根据scause选择异常处理函数
+→handle_syscall根据a7查找并调用具体内核函数
+→将返回值写入保存现场中的a0，并令sepc=sepc+4
 →RESTORE_CONTEXT恢复用户态现场
-→sret返回用户程序
+→sret返回User Mode，从ecall的下一条指令继续执行
 ```
 
-### 7.2 参数和返回值传递
+`sepc`必须加4，因为它最初指向触发例外的`ecall`。如果直接返回原地址，程序会再次执行同一条`ecall`并反复陷入内核。
 
-计划沿用RISC-V调用习惯：
+### 7.3 相关寄存器
 
-| 寄存器 | 含义 |
+系统调用和例外入口涉及的通用寄存器如下：
+
+| 寄存器 | 主要用途 | 本实验中的作用 |
+|---|---|---|
+| `zero` | 恒为0 | 保存现场时对应`regs[0]`，实际值始终为0 |
+| `ra` | 普通函数返回地址 | 用户态`ra`需要保存和恢复；进入内核后另行把`ra`设为`ret_from_exception`，供内核C函数返回 |
+| `sp` | 当前栈指针 | Trap发生时由用户栈切换到当前进程的内核栈，返回前再恢复用户栈 |
+| `gp` | 全局数据指针 | 属于用户现场，需要原样保存和恢复 |
+| `tp` | 线程指针 | 本实验固定保存`current_running`，即当前PCB地址 |
+| `t0`～`t6` | 临时寄存器 | 可能被内核代码覆盖，因此Trap入口需要全部保存 |
+| `s0`～`s11` | 被调用者保存寄存器 | Trap现场和`switch_to`现场都需要保存 |
+| `a0`～`a4` | 函数参数 | 保存系统调用的5个参数，其中`a0`还保存返回值 |
+| `a5`～`a6` | 其他参数寄存器 | 本实验未用于传递系统调用参数，但仍属于用户现场 |
+| `a7` | 第8个参数寄存器 | 本实验用于保存系统调用号 |
+
+例外处理涉及的主要CSR如下：
+
+| CSR或状态位 | 作用 |
 |---|---|
-| `a0`至`a4` | 最多5个系统调用参数 |
-| `a7` | 系统调用号 |
-| `a0` | 系统调用返回值 |
+| `stvec` | 保存Supervisor Mode的Trap总入口地址，本实验指向`exception_handler_entry` |
+| `scause` | 记录Trap类型和原因；最高位区分中断与异常，U态`ecall`的异常编号为8 |
+| `sepc` | 保存被Trap打断的指令地址，也是`sret`返回时使用的PC |
+| `stval` | 保存出错地址等附加信息；框架中的旧名称为`sbadaddr` |
+| `sscratch` | 为Trap入口提供临时存储，可辅助交换用户栈和内核栈；本设计主要通过`tp`和PCB完成栈切换 |
+| `sstatus.SPP` | 记录Trap前的特权级；设为0时`sret`返回User Mode |
+| `sstatus.SIE` | Supervisor Mode的全局中断开关 |
+| `sstatus.SPIE` | 保存Trap前的中断使能状态，供`sret`恢复 |
+| `sstatus.SUM` | 控制Supervisor Mode能否访问用户页面 |
+| `sstatus.FS` | 记录浮点单元状态；入口代码关闭它以避免内核误用未保存的浮点现场 |
+| `sie.STIE` | Supervisor Timer Interrupt的分类开关，Task4使用 |
 
-`invoke_syscall`使用内联汇编把参数放入对应寄存器，再执行`ecall`。异常入口把全部通用寄存器保存到`regs_context_t`后，`handle_syscall`可以从：
+其中`sie.STIE`类似定时器中断的分开关，`sstatus.SIE`是Supervisor Mode的中断总开关。`ecall`是同步异常，不依赖这两个中断开关。
+
+### 7.4 两类上下文和两套栈
+
+每个进程同时拥有用户栈和内核栈。应用在User Mode下使用用户栈，发生Trap后切换到该进程自己的内核栈，以免不同进程的内核调用过程互相覆盖。
+
+本实验存在两类上下文：
+
+| 上下文 | 保存内容 | 保存时机 |
+|---|---|---|
+| `regs_context_t` | 全部通用寄存器以及`sstatus`、`sepc`、`stval`、`scause` | 进程由User Mode进入Supervisor Mode时 |
+| `switchto_context_t` | `ra`、`sp`和`s0`～`s11` | 内核调用`switch_to`切换进程时 |
+
+例如进程A执行`sys_yield`后，内核先保存A的用户态`regs_context_t`，再由`switch_to`保存A的内核态`switchto_context_t`；随后恢复进程B的内核态上下文，最后由`ret_from_exception`恢复B的用户态上下文并执行`sret`。因此，一次完整的进程切换需要经过两层上下文保存和恢复。
+
+新进程从未真正运行过，所以`init_pcb_stack`需要预先构造两层假现场：`switchto_context_t.ra`指向`ret_from_exception`，`regs_context_t.sepc`指向应用入口，用户`sp`指向用户栈顶，`tp`指向该进程PCB，同时保持`SPP=0`、设置`SPIE=1`。第一次被调度时，进程便会按照“恢复内核上下文→恢复用户上下文→`sret`”的统一路径进入User Mode。
+
+### 7.5 例外和系统调用的分发
+
+本实验采用两级分发：
 
 ```text
-regs[10]～regs[14]读取a0～a4
-regs[17]读取a7
+scause
+→interrupt_helper
+→异常查exc_table，中断查irq_table
+→exc_table[8]=handle_syscall
+→handle_syscall读取a7
+→syscall[a7]
+→具体内核服务
 ```
 
-之后调用：
+这种表驱动设计将“Trap种类”和“具体系统调用号”分开，便于以后继续增加异常处理函数或系统调用。各文件的主要职责如下：
 
-```c
-syscall[sysno](arg0, arg1, arg2, arg3, arg4);
-```
-
-返回值写回`regs[10]`，这样恢复现场后，用户程序可以从`a0`取得返回结果。
-
-系统调用处理完还需要执行：
-
-```c
-regs->sepc += 4;
-```
-
-因为`sepc`指向触发异常的`ecall`指令。如果直接返回原`sepc`，用户程序会再次执行同一条`ecall`并不断陷入内核。
-
-### 7.3 异常入口初始化
-
-`setup_exception`首先需要把异常入口写入：
-
-```text
-stvec=exception_handler_entry
-```
-
-本实验采用Direct模式，因此`stvec`最低两位应为0。Task 4还需要：
-
-- 设置`sie.STIE=1`，允许Supervisor Timer Interrupt；
-- 设置`sstatus.SIE=1`，打开Supervisor Mode全局中断；
-- 设置下一次定时器触发时间。
-
-这里需要区分`sie`和`sstatus.SIE`：前者决定某一种中断是否允许，后者是Supervisor Mode下的全局开关，两者都满足时定时器中断才能正常进入内核。
-
-### 7.4 异常发生时保存的内容
-
-异常可能在任意指令处发生，因此`SAVE_CONTEXT`需要保存：
-
-1. 全部32个通用寄存器；
-2. `sstatus`，用于恢复异常前的特权级和中断状态；
-3. `sepc`，用于恢复异常前的执行位置；
-4. `stval`，用于记录出错地址等附加信息；
-5. `scause`，用于判断异常或中断原因。
-
-保存时还要特别处理`sp`和`tp`：
-
-- `sp`需要从用户栈切换到当前进程的内核栈，同时原用户栈指针不能丢失；
-- `tp`表示`current_running`，异常处理期间仍需要通过它找到当前PCB。
-
-`RESTORE_CONTEXT`按照相反顺序恢复寄存器，最后由`sret`根据`sstatus.SPP`选择返回特权级，并跳转到`sepc`。
+| 文件 | 主要职责 |
+|---|---|
+| `init/main.c` | 构造进程初始现场并初始化`syscall[]` |
+| `arch/riscv/kernel/trap.S` | 将`exception_handler_entry`写入`stvec` |
+| `arch/riscv/kernel/entry.S` | 保存和恢复现场，完成Trap入口与`sret`返回 |
+| `kernel/irq/irq.c` | 根据`scause`分发异常或中断 |
+| `kernel/syscall/syscall.c` | 根据`a7`调用具体系统调用并处理返回值 |
+| `tiny_libc/syscall.c` | 用户侧封装参数并执行`ecall` |
+| `kernel/sched/sched.c`和`time.c` | 实现睡眠阻塞及到时唤醒 |
 
 ## 8 睡眠和定时器中断
 
