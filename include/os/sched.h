@@ -51,7 +51,7 @@ typedef struct regs_context
 typedef struct switchto_context
 {
     /* Callee saved registers.*/
-    reg_t regs[14];
+    reg_t regs[14]; // reg[0]=ra, reg[1]=sp,后续为s0~s11
 } switchto_context_t;
 
 typedef enum {

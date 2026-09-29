@@ -39,6 +39,9 @@
 
 #include <type.h>
 
+// __builtin_offsetod(type, member)在编译器计算成员的偏移量
+#define list_entry(ptr, type, member) ((type*)((char*)(ptr)-__builtin_offsetof(type, member)))
+
 // double-linked list
 typedef struct list_node
 {
@@ -51,5 +54,38 @@ typedef list_node_t list_head;
 #define LIST_HEAD(name) struct list_node name = {&(name), &(name)}
 
 /* TODO: [p2-task1] implement your own list API */
+
+static inline void list_init(list_head *head){
+    head->next = head;
+    head->prev = head;
+}
+
+static inline int list_empty(list_head *head){
+    return head->next==head;
+}
+
+static inline void list_add_tail(list_node_t *node, list_head *head){
+    node->next = head;
+    node->prev = head->prev;
+    head->prev->next = node;
+    head->prev = node;
+}
+
+static inline void list_del(list_node_t *node){
+    node->prev->next = node->next;
+    node->next->prev = node->prev;
+    node->next = node;
+    node->prev = node;
+}
+
+static inline list_node_t *list_pop_front(list_head *head){
+    if(list_empty(head)){
+        return 0;
+    }
+
+    list_node_t *node = head->next;
+    list_del(node);
+    return node;
+}
 
 #endif

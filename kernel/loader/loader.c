@@ -44,5 +44,7 @@ uint64_t load_task_img(const char *taskname, int tasknum){
 
     memcpy((uint8_t*)task->task_entry, (uint8_t*)(TASK_BUFFER_BASE+block_offset), task->task_size);
 
+    asm volatile("fence.i" ::: "memory");
+    
     return task->task_entry;
 }

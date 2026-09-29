@@ -30,9 +30,25 @@ void do_scheduler(void)
     /************************************************************/
 
     // TODO: [p2-task1] Modify the current_running pointer.
+    pcb_t *prev = current_running;
+    if(prev->pid!=0 && prev->status==TASK_RUNNING){ //pid0是假现场，后续不参与
+        prev->status = TASK_READY;
+        list_add_tail(&prev->list, &ready_queue);
+    }
 
+    list_node_t *node = list_pop_front(&ready_queue);
+
+    if(node == NULL){
+        return;
+    }
+
+    pcb_t *next = list_entry(node, pcb_t, list);
+
+    next->status = TASK_RUNNING;
+    current_running = next;
 
     // TODO: [p2-task1] switch_to current_running
+    switch_to(prev, next);
 
 }
 
