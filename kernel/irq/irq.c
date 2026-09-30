@@ -38,6 +38,11 @@ void handle_irq_timer(regs_context_t *regs, uint64_t stval, uint64_t scause)
     // Note: use bios_set_timer to reset the timer and remember to reschedule
     bios_set_timer(get_ticks()+TIMER_INTERVAL);
     screen_reflush();
+    check_sleeping();
+    if(current_running->pid!=0 && current_running->ticks_left>1){
+        current_running->ticks_left--;
+        return;
+    }
     do_scheduler();
 }
 

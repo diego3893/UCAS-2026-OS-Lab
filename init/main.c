@@ -141,13 +141,18 @@ static void init_pcb(int tasknum)
 {
     /* TODO: [p2-task1] load needed tasks and init their corresponding PCB */
     static const char *task_names[] = {
-        "print1",
-        "print2",
-        "fly",
-        "lock1",
-        "lock2",
-        "sleep",
-        "timer"
+        // "print1",
+        // "print2",
+        // "fly",
+        // "lock1",
+        // "lock2",
+        // "sleep",
+        // "timer"
+        "fly1",
+        "fly2",
+        "fly3",
+        "fly4",
+        "fly5"
     };
 
     int task_count = sizeof(task_names)/sizeof(task_names[0]);
@@ -180,6 +185,8 @@ static void init_pcb(int tasknum)
         pcb[i].cursor_x = 0;
         pcb[i].cursor_y = 0;
         pcb[i].wakeup_time = 0;
+        pcb[i].time_slice = 1;
+        pcb[i].ticks_left = 1;
 
         list_init(&pcb[i].list);
 
@@ -209,6 +216,7 @@ static void init_syscall(void)
     syscall[SYSCALL_LOCK_INIT] = (long (*)())do_mutex_lock_init;
     syscall[SYSCALL_LOCK_ACQ] = (long (*)())do_mutex_lock_acquire;
     syscall[SYSCALL_LOCK_RELEASE] = (long (*)())do_mutex_lock_release;
+    syscall[SYSCALL_SET_SCHE_WORKLOAD] = (long (*)())do_set_sche_workload;
 }
 /************************************************************/
 

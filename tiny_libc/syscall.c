@@ -93,6 +93,11 @@ void sys_sleep(uint32_t time)
     invoke_syscall(SYSCALL_SLEEP, (long)time, IGNORE, IGNORE, IGNORE, IGNORE);
 }
 
+void sys_set_sche_workload(int workload)
+{
+    invoke_syscall(SYSCALL_SET_SCHE_WORKLOAD, (long)workload, IGNORE, IGNORE, IGNORE, IGNORE);
+}
+
 /************************************************************/
 /* Do not touch this comment. Reserved for future projects. */
 /************************************************************/

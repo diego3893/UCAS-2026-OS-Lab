@@ -7,6 +7,9 @@
 #include <printk.h>
 #include <assert.h>
 
+#define MIN_TIME_SLICE 1
+#define MAX_TIME_SLICE 8
+
 pcb_t pcb[NUM_MAX_TASK];
 const ptr_t pid0_stack = INIT_KERNEL_STACK + PAGE_SIZE;
 pcb_t pid0_pcb = {
@@ -44,6 +47,11 @@ void do_scheduler(void)
     list_node_t *node = list_pop_front(&ready_queue);
     pcb_t *next = list_entry(node, pcb_t, list);
 
+    if(next->time_slice == 0){
+        next->time_slice = MIN_TIME_SLICE;
+    }
+
+    next->ticks_left = next->time_slice;
     next->status = TASK_RUNNING;
     current_running = next;
 
@@ -83,4 +91,57 @@ void do_unblock(list_node_t *pcb_node)
 
     task->status = TASK_READY;
     list_add_tail(pcb_node, &ready_queue);
+}
+
+static void update_time_slices(void){
+    uint64_t max_progress = 0;
+
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        if(pcb[i].workload_valid && pcb[i].progress>max_progress){
+            max_progress = pcb[i].progress;
+        }
+    }
+
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        if(!pcb[i].workload_valid){
+            continue;
+        }
+
+        uint64_t lag = max_progress-pcb[i].progress;
+        uint64_t slice = MIN_TIME_SLICE+lag;
+
+        if(slice > MAX_TIME_SLICE){
+            slice = MAX_TIME_SLICE;
+        }
+
+        pcb[i].time_slice = (uint32_t)slice;
+    }
+}
+
+long do_set_sche_workload(int workload){
+    pcb_t *task = current_running;
+
+    if(workload <= 0){
+        return -1;
+    }
+
+    if(!task->workload_valid){
+        task->workload_valid = 1;
+        task->initial_workload = workload;
+        task->last_workload = workload;
+        task->completed_rounds = 0;
+        task->progress = 0;
+    }else{
+        if(workload > task->last_workload){ // 新一轮开始
+            task->completed_rounds++;
+        }
+
+        task->last_workload = workload;
+        task->progress =
+                task->completed_rounds*(uint64_t)task->initial_workload+(uint64_t)(task->initial_workload-workload);
+    }
+
+    update_time_slices();
+
+    return 0;
 }

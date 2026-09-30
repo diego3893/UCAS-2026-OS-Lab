@@ -85,6 +85,16 @@ typedef struct pcb
     /* time(seconds) to wake up sleeping PCB */
     uint64_t wakeup_time;
 
+    int workload_valid; // 是否收到首次路程报告
+    int initial_workload; // 将首次路程作为起始点
+    int last_workload; // 上次报告的剩余路程
+
+    uint64_t completed_rounds; // 已完成轮数
+    uint64_t progress; // 累计前进步数
+
+    uint32_t time_slice; // 每次获得几个时间片
+    uint32_t ticks_left; // 还剩几个时间片
+
 } pcb_t;
 
 /* ready queue to run */
@@ -107,6 +117,8 @@ void do_sleep(uint32_t);
 
 void do_block(list_node_t *, list_head *queue);
 void do_unblock(list_node_t *);
+
+long do_set_sche_workload(int workload);
 
 /************************************************************/
 /* Do not touch this comment. Reserved for future projects. */
