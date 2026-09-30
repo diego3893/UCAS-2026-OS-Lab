@@ -40,7 +40,7 @@
 #include <type.h>
 
 // __builtin_offsetod(type, member)在编译器计算成员的偏移量
-#define list_entry(ptr, type, member) ((type*)((char*)(ptr)-__builtin_offsetof(type, member)))
+#define list_entry(ptr, type, member) ((type*)((char*)(ptr)-(ptr_t)&((type*)0)->member))
 
 // double-linked list
 typedef struct list_node
