@@ -538,31 +538,31 @@ Task 5中有5个`fly`程序，它们的`CYCLE_PER_MOVE`不同。相同时间片�
 
 ## 11 TODO
 
-- [ ] Task 1：任务启动与非抢占式调度
-  - [ ] 完成双向链表基本操作
-  - [ ] 初始化PCB、用户栈和内核栈
-  - [ ] 实现`switch_to`
-  - [ ] 实现Round Robin调度器
-  - [ ] 通过跳转表实现`sys_yield`、输出和光标操作
-- [ ] Task 2：互斥锁
-  - [ ] 实现`do_block`和`do_unblock`
-  - [ ] 实现自旋锁基本操作
-  - [ ] 实现互斥锁初始化、申请和释放
-- [ ] Task 3：系统调用
-  - [ ] 初始化异常入口和系统调用表
-  - [ ] 实现`SAVE_CONTEXT`和`RESTORE_CONTEXT`
-  - [ ] 实现`invoke_syscall`和`handle_syscall`
-  - [ ] 实现`sleep`和睡眠队列
-  - [ ] 使用`loadbootd`测试用户态和内核态隔离
-- [ ] Task 4：定时器中断和抢占式调度
-  - [ ] 使能Supervisor Timer Interrupt
-  - [ ] 实现定时器中断处理
-  - [ ] 在没有`sys_yield`时完成进程调度
-- [ ] Task 5：复杂调度算法
-  - [ ] 实现`set_sche_workload`系统调用
-  - [ ] 记录并估计不同进程的运行进度
-  - [ ] 动态调整调度权重或时间片
-  - [ ] 保证不同速度的飞机持续、近似同步地移动
+- [x] Task 1：任务启动与非抢占式调度
+  - [x] 完成双向链表基本操作
+  - [x] 初始化PCB、用户栈和内核栈
+  - [x] 实现`switch_to`
+  - [x] 实现Round Robin调度器
+  - [x] 通过跳转表实现`sys_yield`、输出和光标操作
+- [x] Task 2：互斥锁
+  - [x] 实现`do_block`和`do_unblock`
+  - [x] 实现自旋锁基本操作
+  - [x] 实现互斥锁初始化、申请和释放
+- [x] Task 3：系统调用
+  - [x] 初始化异常入口和系统调用表
+  - [x] 实现`SAVE_CONTEXT`和`RESTORE_CONTEXT`
+  - [x] 实现`invoke_syscall`和`handle_syscall`
+  - [x] 实现`sleep`和睡眠队列
+  - [x] 使用`loadbootd`测试用户态和内核态隔离
+- [x] Task 4：定时器中断和抢占式调度
+  - [x] 使能Supervisor Timer Interrupt
+  - [x] 实现定时器中断处理
+  - [x] 在没有`sys_yield`时完成进程调度
+- [x] Task 5：复杂调度算法
+  - [x] 实现`set_sche_workload`系统调用
+  - [x] 记录并估计不同进程的运行进度
+  - [x] 动态调整调度权重或时间片
+  - [x] 保证不同速度的飞机持续、近似同步地移动
 
 ## 12 Design Review问题详细回答
 
