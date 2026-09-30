@@ -563,3 +563,158 @@ Task 5中有5个`fly`程序，它们的`CYCLE_PER_MOVE`不同。相同时间片�
   - [ ] 记录并估计不同进程的运行进度
   - [ ] 动态调整调度权重或时间片
   - [ ] 保证不同速度的飞机持续、近似同步地移动
+
+## 12 Design Review问题详细回答
+
+### 12.1 Syscall的执行流程与参数传递
+
+Task1和Task2中，用户程序通过跳转表直接调用内核函数。当时用户程序和内核都运行在Supervisor Mode，还没有真正的特权级隔离。Task3开始后，用户程序运行在User Mode，内核运行在Supervisor Mode，用户程序需要通过`ecall`进入内核。
+
+以`sys_write(buff)`为例，完整执行流程如下：
+
+```text
+用户程序调用sys_write
+→tiny_libc中的sys_write调用invoke_syscall
+→a0保存buff地址，a7保存SYSCALL_WRITE
+→执行ecall
+→CPU产生来自User Mode的系统调用异常
+→scause=8，sepc保存ecall指令地址
+→CPU切换到Supervisor Mode
+→PC跳转到stvec中的exception_handler_entry
+→SAVE_CONTEXT保存用户态现场
+→interrupt_helper根据scause判断异常类型
+→exc_table[8]找到handle_syscall
+→handle_syscall从a7取得系统调用号
+→通过syscall[a7]调用screen_write
+→将返回值写入保存现场中的a0
+→sepc加4
+→RESTORE_CONTEXT恢复用户态现场
+→执行sret，返回User Mode
+```
+
+系统调用采用以下参数约定：
+
+| 寄存器 | 用途 |
+|---|---|
+| `a0` | 第1个参数，同时用于保存返回值 |
+| `a1` | 第2个参数 |
+| `a2` | 第3个参数 |
+| `a3` | 第4个参数 |
+| `a4` | 第5个参数 |
+| `a7` | 系统调用号 |
+
+例如`sys_move_cursor(10,20)`执行`ecall`前，`a0=10`、`a1=20`、`a7=SYSCALL_CURSOR`。用户侧`invoke_syscall`通过固定寄存器变量装载参数，内核侧再从`regs_context_t`中读取`a0～a4`和`a7`。
+
+系统调用完成后，返回值写入保存现场中的`a0`。同时必须令`sepc=sepc+4`，因为`sepc`原本指向触发异常的`ecall`；如果不加4，返回后会再次执行同一条`ecall`。
+
+### 12.2 初始化异常和中断处理时设置的寄存器
+
+Task3首先设置：
+
+```text
+stvec=exception_handler_entry
+```
+
+`stvec`规定发生交给Supervisor Mode处理的Trap后，CPU从哪里开始执行。本实验使用Direct模式，所有异常和中断首先进入同一个`exception_handler_entry`，再由软件读取`scause`进行分发。
+
+系统调用`ecall`属于同步异常，不受中断开关控制，所以Task3不需要为系统调用打开定时器中断。新进程的初始`sstatus`设置为`SR_SPIE`，使`SPP=0`、`SPIE=1`：`SPP=0`表示`sret`返回User Mode，`SPIE=1`用于恢复中断使能状态。
+
+Task4实现定时器中断时还需要以下设置：
+
+| 寄存器或状态位 | 初始化值 | 作用 |
+|---|---:|---|
+| `stvec` | `exception_handler_entry` | 设置Trap总入口 |
+| `sstatus.SIE` | 1 | 打开Supervisor Mode全局中断 |
+| `sie.STIE` | 1 | 允许Supervisor Timer Interrupt |
+| Timer比较值 | `get_ticks()+TIMER_INTERVAL` | 设置第一次定时器中断时间 |
+
+其中`sstatus.SIE`相当于中断总开关，`sie.STIE`相当于定时器中断的分开关。
+
+### 12.3 进程因异常进入内核时保存的上下文
+
+异常可能发生在用户程序的任意指令处，因此`SAVE_CONTEXT`需要保存完整用户态现场，包括：
+
+- `ra`、`sp`、`gp`和`tp`；
+- `t0～t6`临时寄存器；
+- `s0～s11`被调用者保存寄存器；
+- `a0～a7`参数和返回值寄存器；
+- `sstatus`、`sepc`、`stval`和`scause`。
+
+刚发生Trap时，`sp`仍指向用户栈，`tp`指向当前PCB。入口汇编先将用户`sp`保存到PCB，再读取当前进程的`kernel_sp`，切换到内核栈并在内核栈上建立`regs_context_t`。
+
+因此，保存的内容属于用户态，但保存位置是当前进程的内核栈。用户栈原有内容仍然保留在内存中，只需要保存它的栈指针，不需要整体复制用户栈。
+
+如果异常处理中又调用`do_scheduler`发生进程切换，还要通过`switch_to`保存一次内核态上下文：
+
+| 上下文 | 保存时机 | 保存内容 |
+|---|---|---|
+| `regs_context_t` | User Mode进入Supervisor Mode | 全部用户寄存器和关键CSR |
+| `switchto_context_t` | 内核执行`switch_to` | `ra`、`sp`和`s0～s11` |
+
+完整过程为：
+
+```text
+保存进程A的用户态上下文
+→保存进程A的内核态上下文
+→恢复进程B的内核态上下文
+→恢复进程B的用户态上下文
+→sret返回进程B
+```
+
+### 12.4 Task3中`init_pcb_stack`的初始化操作
+
+新进程从未运行过，没有真实的寄存器现场。为了复用统一的恢复流程，`init_pcb_stack`需要在内核栈上构造两层假现场：
+
+```text
+内核栈高地址
+┌────────────────────────┐
+│ regs_context_t         │ ← 用户态假现场
+├────────────────────────┤
+│ switchto_context_t     │ ← 内核态假现场
+└────────────────────────┘
+内核栈低地址
+```
+
+首先清零两层现场，避免未初始化寄存器中存在随机值。随后设置：
+
+| 初始化内容 | 设置值 | 作用 |
+|---|---|---|
+| 用户`sp` | `user_stack` | 进入用户程序后使用用户栈 |
+| 用户`tp` | 当前PCB地址 | 发生Trap时能够找到当前PCB |
+| `sepc` | 用户程序入口 | 第一次`sret`后从应用入口执行 |
+| `sstatus.SPP` | 0 | `sret`后进入User Mode |
+| `sstatus.SPIE` | 1 | 返回后恢复中断使能状态 |
+| 内核假现场`ra` | `ret_from_exception` | `switch_to`恢复后进入用户现场恢复流程 |
+| 内核假现场`sp` | `pt_switchto` | `switch_to`加上现场大小后恰好指向`pt_regs` |
+| `pcb->kernel_sp` | `pt_switchto` | 第一次调度时找到内核假现场 |
+| `pcb->user_sp` | `user_stack` | 记录用户栈位置 |
+
+第一次调度时的执行过程为：
+
+```text
+switch_to恢复内核假现场
+→ra指向ret_from_exception
+→sp指向用户态假现场
+→RESTORE_CONTEXT恢复用户现场
+→sret
+→从sepc记录的用户程序入口开始执行
+```
+
+### 12.5 Task3和Task4唤醒睡眠进程的时机
+
+进程调用`sys_sleep(sleep_time)`后，内核设置：
+
+```c
+current_running->wakeup_time = get_timer()+sleep_time;
+```
+
+然后将当前PCB阻塞到`sleep_queue`。`check_sleeping`遍历睡眠队列，把满足`wakeup_time<=current_time`的PCB解除阻塞并放回`ready_queue`。
+
+Task3没有定时器中断，采用非抢占式调度。只有其他进程主动调用`sys_yield`、`sys_sleep`或因锁而阻塞，进入`do_scheduler`时，才会调用`check_sleeping`检查睡眠队列。如果就绪队列为空，调度器会持续检查时间，直到有睡眠进程到期。
+
+Task4加入周期性定时器中断。用户进程即使不主动调用`sys_yield`，定时器也会强制进入`handle_irq_timer`并调用`do_scheduler`，从而周期性检查睡眠队列。
+
+| 任务 | 调度触发方式 | 检查睡眠队列的时机 |
+|---|---|---|
+| Task3 | 用户进程主动`yield`、`sleep`或阻塞 | 每次主动进入调度器时 |
+| Task4 | 硬件定时器强制中断 | 每个时间片结束时 |

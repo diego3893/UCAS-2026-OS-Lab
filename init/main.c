@@ -245,7 +245,7 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
 
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
-    
+    bios_set_timer(get_ticks()+TIMER_INTERVAL);
 
 
     // TODO: Load tasks by either task id [p1-task3] or task name [p1-task4],
@@ -255,11 +255,11 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
     while (1)
     {
         // If you do non-preemptive scheduling, it's used to surrender control
-        do_scheduler();
+        // do_scheduler();
 
         // If you do preemptive scheduling, they're used to enable CSR_SIE and wfi
-        // enable_preempt();
-        // asm volatile("wfi");
+        enable_preempt();
+        asm volatile("wfi");
     }
 
     return 0;
