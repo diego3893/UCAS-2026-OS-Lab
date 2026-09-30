@@ -95,12 +95,23 @@ void do_unblock(list_node_t *pcb_node)
 
 static void update_time_slices(void){
     uint64_t max_progress = 0;
+    uint64_t min_progress = UINT64_MAX;
 
     for(int i=0; i<NUM_MAX_TASK; ++i){
-        if(pcb[i].workload_valid && pcb[i].progress>max_progress){
+        if(!pcb[i].workload_valid){
+            continue;
+        }
+
+        if(pcb[i].progress>max_progress){
             max_progress = pcb[i].progress;
         }
+
+        if(pcb[i].progress<min_progress){
+            min_progress = pcb[i].progress;
+        }
     }
+
+    uint64_t max_lag = max_progress-min_progress;
 
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(!pcb[i].workload_valid){
@@ -108,10 +119,10 @@ static void update_time_slices(void){
         }
 
         uint64_t lag = max_progress-pcb[i].progress;
-        uint64_t slice = MIN_TIME_SLICE+lag;
+        uint64_t slice = MIN_TIME_SLICE;
 
-        if(slice > MAX_TIME_SLICE){
-            slice = MAX_TIME_SLICE;
+        if(max_lag>0){
+            slice += lag*(MAX_TIME_SLICE-MIN_TIME_SLICE)/max_lag;
         }
 
         pcb[i].time_slice = (uint32_t)slice;
