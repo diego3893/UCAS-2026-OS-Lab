@@ -119,7 +119,7 @@ static void init_pcb_stack(
 
     pt_regs->regs[OFFSET_REG_SP>>3] = user_stack; // sp指向用户栈
     pt_regs->regs[OFFSET_REG_TP>>3] = (reg_t)pcb; // tp = PCB地址
-    pt_regs->sepc = entry_point; // sret跳转到spec，初始化为入口
+    pt_regs->sepc = entry_point; // sret跳转到sepc，初始化为入口
 
     pt_regs->sstatus = SR_SPIE; // SPP置零，SPIE置1
 

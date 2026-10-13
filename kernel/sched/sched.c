@@ -35,7 +35,7 @@ void do_scheduler(void)
 
     // TODO: [p2-task1] Modify the current_running pointer.
     pcb_t *prev = current_running;
-    if(prev->pid!=0 && prev->status==TASK_RUNNING){ //pid0是内核进程，不进入调度队列
+    if(prev->pid!=0 && prev->status==TASK_RUNNING){ //pid0不进入调度队列
         prev->status = TASK_READY;
         list_add_tail(&prev->list, &ready_queue);
     }

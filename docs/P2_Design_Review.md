@@ -718,3 +718,103 @@ Task4加入周期性定时器中断。用户进程即使不主动调用`sys_yiel
 |---|---|---|
 | Task3 | 用户进程主动`yield`、`sleep`或阻塞 | 每次主动进入调度器时 |
 | Task4 | 硬件定时器强制中断 | 每个时间片结束时 |
+
+### 12.6 `switch_to`的工作机制
+
+`switch_to(prev,next)`的两个参数按照RISC-V函数调用约定分别放在`a0`和`a1`中，二者都是PCB地址。该函数切换的是两个进程的内核执行现场，具体流程如下：
+
+1. 在当前进程的内核栈上减去`SWITCH_TO_SIZE`，为`switchto_context_t`预留空间。
+2. 将当前内核执行流的`ra`、`sp`和`s0～s11`保存到这段空间中。
+3. 将当前`sp`写入`prev->kernel_sp`，使PCB能够记录当前内核现场的位置。
+4. 从`next->kernel_sp`取出下一个进程的内核栈指针，并写入硬件`sp`。从这一条指令开始，CPU已经改用下一个进程的内核栈。
+5. 从新内核栈恢复`next`的`ra`和`s0～s11`，再恢复其`sp`。
+6. 给`sp`加回`SWITCH_TO_SIZE`，执行`jr ra`，回到`next`上一次停止执行的位置。
+
+因此，进程A调用`switch_to(A,B)`时，这次函数调用不会立即在A中返回，而是恢复B保存的`ra`和`sp`，转而继续执行B。以后A再次被选中时，它保存的现场会被恢复，此时A才像普通函数返回一样，从原来`switch_to`调用之后继续执行。
+
+```text
+进程A正在内核中运行
+→保存A的ra、sp和s0～s11
+→A.kernel_sp记录A的内核现场
+→sp切换为B.kernel_sp
+→恢复B的ra、sp和s0～s11
+→从B上次暂停的位置继续运行
+```
+
+对于从未运行过的新进程，没有可以恢复的真实现场，因此`init_pcb_stack`预先构造假的`switchto_context_t`。其中`ra=ret_from_exception`，使新进程第一次被调度后进入用户现场恢复流程，而不是回到某次真实的`switch_to`调用。
+
+### 12.7 PCB和内核栈的初始化
+
+本实验的`init_pcb`首先初始化全局`ready_queue`和`sleep_queue`，然后初始化代表内核启动执行流的`pid0_pcb`。`pid0_pcb`的状态设为`TASK_RUNNING`，最后令`current_running=&pid0_pcb`，这样第一次调度时可以把0号进程作为`prev`。
+
+对每个用户任务，当前实现依次完成：
+
+1. 根据任务名调用`load_task_img`，将程序从镜像加载到内存并取得ELF入口地址；入口为0时通过`assert`停止启动。
+2. 调用`allocKernelPage(1)`分配一页内核栈，调用`allocUserPage(1)`分配一页用户栈。两种栈都向低地址增长，因此传给初始化函数的是页面的高地址。
+3. 清零整个PCB，然后设置唯一的`pid`、`TASK_READY`状态、屏幕光标、唤醒时间以及Task5使用的`time_slice`和`ticks_left`。其他Task5字段也因清零而处于未报告进度的初始状态。
+4. 初始化PCB中的链表节点。
+5. 调用`init_pcb_stack`，在内核栈顶下方依次构造`regs_context_t`和`switchto_context_t`两层假现场。
+6. 将PCB的链表节点加入`ready_queue`队尾，等待调度。
+
+两层初始现场分别承担不同作用：`switchto_context_t`让`switch_to`能够把新进程当作暂停过的内核执行流恢复；`regs_context_t`让`ret_from_exception`能够把它当作发生过Trap的用户进程恢复。最终通过`sret`进入任务入口，并使用独立的用户栈运行。
+
+### 12.8 `switchto_context_t`保存的内容
+
+当前实现中，`switchto_context_t`包含14个`reg_t`，依次保存：
+
+| 内容 | 数量 | 作用 |
+|---|---:|---|
+| `ra` | 1 | 保存内核函数返回位置，恢复后由`jr ra`继续执行 |
+| `sp` | 1 | 保存该进程当前内核栈位置 |
+| `s0～s11` | 12 | 保存RISC-V调用约定规定的callee-saved寄存器 |
+
+这里只保存callee-saved寄存器，是因为`switch_to`本身按照普通函数调用发生。按照RISC-V调用约定，调用者不能要求`t0～t6`和`a0～a7`在函数调用前后保持不变，而`ra`、`sp`和`s0～s11`必须维持内核执行流的连续性。
+
+`switchto_context_t`不能代替`regs_context_t`。如果进程从用户态因异常或中断进入内核，异常可能发生在任意指令处，此时包括`t`、`a`系列在内的全部用户寄存器都必须保存在`regs_context_t`中。若异常处理过程中又发生进程调度，则先保存完整用户现场，再由`switch_to`保存较小的内核现场。
+
+### 12.9 `do_scheduler`的工作流程
+
+当前调度器使用就绪队列维护可以运行的进程，其基本选择顺序仍为Round Robin，Task5只是在此基础上改变一个进程能够连续使用多少个定时器时间片。
+
+`do_scheduler`的具体流程为：
+
+1. 调用`check_sleeping`，将已经到达唤醒时间的进程从`sleep_queue`移回`ready_queue`。
+2. 保存`current_running`为`prev`。
+3. 如果`prev`不是0号进程，并且状态仍为`TASK_RUNNING`，说明它只是主动让出CPU或时间片用完。调度器将其状态改为`TASK_READY`，并放到`ready_queue`队尾。
+4. 如果就绪队列为空，就循环调用`check_sleeping`，直到出现可以运行的进程。
+5. 从`ready_queue`队头取出链表节点，通过`list_entry`还原出所在的PCB，作为`next`。
+6. 保证`next->time_slice`至少为1，并令`next->ticks_left=next->time_slice`。
+7. 将`next`设为`TASK_RUNNING`，更新`current_running=next`。
+8. 调用`switch_to(prev,next)`，保存原进程内核现场并恢复新进程内核现场。
+
+```text
+检查睡眠队列
+→必要时把prev放回就绪队列队尾
+→从就绪队列队头取出next
+→初始化next的剩余时间片
+→更新状态和current_running
+→switch_to(prev,next)
+```
+
+Task4中，每次定时器中断会先减少当前进程的`ticks_left`。只要它仍大于1，就直接从中断返回，让当前进程继续执行；用完后才调用`do_scheduler`。Task5动态修改`time_slice`，因此落后进程被选中后可以连续运行更多个定时器周期，但队列中进程的先后次序没有改变。
+
+### 12.10 进程被阻塞时内核的处理
+
+当前正在运行的进程不位于`ready_queue`中，所以`do_block`不需要先从就绪队列删除它。该函数完成三件事：
+
+1. 通过PCB中的链表节点找到对应PCB，并把状态设为`TASK_BLOCKED`。
+2. 将链表节点加入指定阻塞队列的队尾。
+3. 立即调用`do_scheduler`，把CPU交给其他就绪进程。
+
+由于被阻塞进程的状态已经不是`TASK_RUNNING`，调度器不会把它重新加入`ready_queue`。`switch_to`会保存它当前的内核现场，包括返回地址和内核栈位置。以后该进程被唤醒并再次获得CPU时，会从`do_block`内部尚未返回的`do_scheduler`调用处继续执行，然后逐层返回到原来的系统调用。
+
+阻塞队列与等待的资源对应，而不是每一段临界区都建立一个队列：
+
+| 阻塞原因 | 使用的队列 | 唤醒条件 |
+|---|---|---|
+| 等待某把互斥锁 | 该`mutex_lock_t`自己的`block_queue` | 其他进程释放这把锁 |
+| 调用`sys_sleep` | 全局`sleep_queue` | 当前时间达到`wakeup_time` |
+
+`do_unblock`执行相反操作：先把PCB节点从原阻塞队列删除，将状态改为`TASK_READY`，再加入`ready_queue`队尾。它只让进程重新具备运行资格，不会立刻强制切换到该进程。
+
+本实验的互斥锁采用直接交接方式。释放锁时，如果阻塞队列为空，就把底层自旋锁设为`UNLOCKED`；如果存在等待者，则唤醒队首进程但保持锁为`LOCKED`，相当于把锁的使用权直接交给该进程。被唤醒进程以后恢复执行时，`do_block`返回，随后`do_mutex_lock_acquire`返回用户态并进入临界区。
