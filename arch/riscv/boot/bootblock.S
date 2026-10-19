@@ -43,6 +43,7 @@ main:
 	lhu a1, 0(t0)
 
 	// TODO: [p1-task2] jump to kernel to start UCAS-OS
+	fence.i
 	j kernel
 
 	/************************************************************/
