@@ -19,6 +19,7 @@
 #include <asm/regs.h>
 
 extern void ret_from_exception();
+static long do_readch(void);
 
 // Task info array
 task_info_t tasks[TASK_MAXNUM];
@@ -94,109 +95,9 @@ static void read_task_name(char *taskname){
 }
 
 /************************************************************/
-static void init_pcb_stack(
-    ptr_t kernel_stack, ptr_t user_stack, ptr_t entry_point,
-    pcb_t *pcb)
-{
-     /* TODO: [p2-task3] initialization of registers on kernel stack
-      * HINT: sp, ra, sepc, sstatus
-      * NOTE: To run the task in user mode, you should set corresponding bits
-      *     of sstatus(SPP, SPIE, etc.).
-      */
-    regs_context_t *pt_regs =
-        (regs_context_t *)(kernel_stack - sizeof(regs_context_t));
-
-
-    /* TODO: [p2-task1] set sp to simulate just returning from switch_to
-     * NOTE: you should prepare a stack, and push some values to
-     * simulate a callee-saved context.
-     */
-    switchto_context_t *pt_switchto =
-        (switchto_context_t *)((ptr_t)pt_regs - sizeof(switchto_context_t));
-
-    memset(pt_regs, 0, sizeof(regs_context_t));
-    memset(pt_switchto, 0, sizeof(switchto_context_t));
-
-    pt_regs->regs[OFFSET_REG_SP>>3] = user_stack; // sp指向用户栈
-    pt_regs->regs[OFFSET_REG_TP>>3] = (reg_t)pcb; // tp = PCB地址
-    pt_regs->sepc = entry_point; // sret跳转到sepc，初始化为入口
-
-    pt_regs->sstatus = SR_SPIE; // SPP置零，SPIE置1
-
-    pt_switchto->regs[SWITCH_TO_RA>>3] = (reg_t)ret_from_exception; // 通过sret返回U-Mode
-    pt_switchto->regs[SWITCH_TO_SP>>3] = (reg_t)pt_switchto; // pt_switchto+SWITCH_TO_SIZE=pt_regs，便于恢复用户现场
-
-    pcb->kernel_sp = (ptr_t)pt_switchto;
-    pcb->user_sp = user_stack;
-
-    // task1 code
-    // pt_switchto->regs[0] = entry_point; // 假现场的ra指向入口
-
-    // pt_switchto->regs[1] = user_stack-sizeof(switchto_context_t); // 预留假现场的栈空间
-    // pcb->kernel_sp = (ptr_t)pt_switchto;
-    // pcb->user_sp = user_stack;
-}
-
 static void init_pcb(int tasknum)
 {
-    /* TODO: [p2-task1] load needed tasks and init their corresponding PCB */
-    static const char *task_names[] = {
-        // "print1",
-        // "print2",
-        // "fly",
-        // "lock1",
-        // "lock2",
-        // "sleep",
-        // "timer"
-        "fly1",
-        "fly2",
-        "fly3",
-        "fly4",
-        "fly5"
-    };
-
-    int task_count = sizeof(task_names)/sizeof(task_names[0]);
-
-    list_init(&ready_queue);
-    list_init(&sleep_queue);
-
-    memset(&pid0_pcb.list, 0, sizeof(list_node_t));
-    list_init(&pid0_pcb.list);
-
-    pid0_pcb.status = TASK_RUNNING;
-    pid0_pcb.cursor_x = 0;
-    pid0_pcb.cursor_y = 0;
-    pid0_pcb.wakeup_time = 0;
-
-    for(int i=0; i<task_count; ++i){
-        uint64_t entry_point = load_task_img(task_names[i], tasknum);
-
-        assert(entry_point!=0);
-
-        // 向下生长！分配页的高位地址
-        ptr_t kernel_stack = allocKernelPage(1)+PAGE_SIZE;
-
-        ptr_t user_stack = allocUserPage(1)+PAGE_SIZE;
-
-        memset(&pcb[i], 0, sizeof(pcb_t));
-
-        pcb[i].pid = process_id++;
-        pcb[i].status = TASK_READY;
-        pcb[i].cursor_x = 0;
-        pcb[i].cursor_y = 0;
-        pcb[i].wakeup_time = 0;
-        pcb[i].time_slice = 1;
-        pcb[i].ticks_left = 1;
-
-        list_init(&pcb[i].list);
-
-        init_pcb_stack(kernel_stack, user_stack, entry_point, &pcb[i]);
-
-        list_add_tail(&pcb[i].list, &ready_queue);
-    }
-
-    /* TODO: [p2-task1] remember to initialize 'current_running' */
-    current_running = &pid0_pcb; // 指向内核进程
+    init_processes(tasknum);
 }
 
 static void init_syscall(void)
@@ -217,6 +118,18 @@ static void init_syscall(void)
     syscall[SYSCALL_LOCK_ACQ] = (long (*)())do_mutex_lock_acquire;
     syscall[SYSCALL_LOCK_RELEASE] = (long (*)())do_mutex_lock_release;
     syscall[SYSCALL_SET_SCHE_WORKLOAD] = (long (*)())do_set_sche_workload;
+    syscall[SYSCALL_EXEC] = (long (*)())do_exec;
+    syscall[SYSCALL_EXIT] = (long (*)())do_exit;
+    syscall[SYSCALL_KILL] = (long (*)())do_kill;
+    syscall[SYSCALL_WAITPID] = (long (*)())do_waitpid;
+    syscall[SYSCALL_PS] = (long (*)())do_process_show;
+    syscall[SYSCALL_GETPID] = (long (*)())do_getpid;
+    syscall[SYSCALL_READCH] = (long (*)())do_readch;
+    syscall[SYSCALL_CLEAR] = (long (*)())screen_clear;
+}
+
+static long do_readch(void){
+    return bios_getchar();
 }
 /************************************************************/
 
@@ -267,7 +180,10 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
 
         // If you do preemptive scheduling, they're used to enable CSR_SIE and wfi
         enable_preempt();
-        asm volatile("wfi");
+        enable_interrupt();
+        while(1){
+            asm volatile("wfi");
+        }
     }
 
     return 0;

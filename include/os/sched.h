@@ -33,6 +33,8 @@
 #include <os/list.h>
 
 #define NUM_MAX_TASK 16
+#define EXEC_MAX_ARGC 16
+#define EXEC_MAX_ARG_BYTES 1024
 
 /* used to save register infomation */
 typedef struct regs_context
@@ -98,6 +100,9 @@ typedef struct pcb
     uint32_t time_slice; // 每次获得几个时间片
     uint32_t ticks_left; // 还剩几个时间片
 
+    int task_id; // 对应tasks数组中的程序编号
+    int recycle_pending; // 退出切换完成前，禁止复用此槽位（p3-task1）
+
 } pcb_t;
 
 /* ready queue to run */
@@ -122,6 +127,8 @@ void do_block(list_node_t *, list_head *queue);
 void do_unblock(list_node_t *);
 
 long do_set_sche_workload(int workload);
+
+void init_processes(int tasknum);
 
 /************************************************************/
 /* TODO [P3-TASK1] exec exit kill waitpid ps*/

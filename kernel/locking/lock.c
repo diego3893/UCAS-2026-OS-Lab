@@ -2,6 +2,7 @@
 #include <os/sched.h>
 #include <os/list.h>
 #include <atomic.h>
+#include <assert.h>
 
 mutex_lock_t mlocks[LOCK_NUM];
 static int mutex_count = 0;
@@ -19,6 +20,7 @@ void init_locks(void)
         spin_lock_init(&mlocks[i].lock);
         list_init(&mlocks[i].block_queue);
         mlocks[i].key = 0;
+        mlocks[i].owner = 0;
     }
 }
 
@@ -95,6 +97,7 @@ int do_mutex_lock_init(int key)
     spin_lock_init(&mlocks[mutex_idx].lock);
     list_init(&mlocks[mutex_idx].block_queue);
     mlocks[mutex_idx].key = key;
+    mlocks[mutex_idx].owner = 0;
 
     return mutex_idx;
 }
@@ -113,12 +116,26 @@ void do_mutex_lock_acquire(int mlock_idx)
 
     mutex_lock_t *mutex = &mlocks[mlock_idx];
 
-    if(!spin_lock_try_acquire(&mutex->lock)){
-        do_block(
-            &current_running->list,
-            &mutex->block_queue
-        );
+    if(spin_lock_try_acquire(&mutex->lock)){
+        mutex->owner = current_running->pid;
+        return;
     }
+    do_block(&current_running->list, &mutex->block_queue);
+
+    assert(mutex->owner==current_running->pid); // 检查owner是否被正确移交
+}
+
+static void release_mutex(mutex_lock_t *mutex){
+    if(list_empty(&mutex->block_queue)){
+        mutex->owner = 0;
+        spin_lock_release(&mutex->lock);
+        return;
+    }
+
+    list_node_t *node = mutex->block_queue.next;
+    pcb_t *next_owner = list_entry(node, pcb_t, list);
+    mutex->owner = next_owner->pid; // 交接所有权
+    do_unblock(node);
 }
 
 /**
@@ -134,11 +151,16 @@ void do_mutex_lock_release(int mlock_idx)
     }
 
     mutex_lock_t *mutex = &mlocks[mlock_idx];
-
-    if(list_empty(&mutex->block_queue)){
-        spin_lock_release(&mutex->lock);
+    if(mutex->owner != current_running->pid){
         return;
     }
+    release_mutex(mutex);
+}
 
-    do_unblock(mutex->block_queue.next);
+void do_mutex_release_all(pid_t pid){
+    for(int i=0; i<mutex_count; ++i){
+        if(mlocks[i].owner == pid){
+            release_mutex(&mlocks[i]);
+        }
+    }
 }

@@ -4,8 +4,8 @@
 ENTRY(_start)
 
     /* TODO: [p1-task3] setup C runtime environment for the user program */
-    addi sp, sp, -16
-    sd ra, 8(sp)
+    # addi sp, sp, -16
+    # sd ra, 8(sp)
 
     la t0, __bss_start
     la t1, __BSS_END__
@@ -21,12 +21,13 @@ clear_bss_done:
 
 
     /* TODO: [p1-task3] finish task and return to the kernel, replace this in p3-task2! */
-    ld ra, 8(sp)
-    addi sp, sp, 16
-    ret
+    # ld ra, 8(sp)
+    # addi sp, sp, 16
+    # ret
 
     /************************************************************/
     /* TODO: [P3] call sys_exit */
+    call sys_exit
     /************************************************************/
 // while(1) loop, unreachable here
 loop:

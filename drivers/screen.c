@@ -36,27 +36,57 @@ static void vt100_hidden_cursor()
 
 /* write a char */
 /* write a char */
-void screen_write_ch(char ch)
-{
-    if (ch == '\n')
-    {
+void screen_write_ch(char ch){
+    // PID1为Shell，使用下半屏；其他进程使用上半屏。
+    int first_row = current_running->pid==1 ? 20 : 0;
+    int last_row = current_running->pid==1 ? SCREEN_HEIGHT-1 : 19;
+
+    if(current_running->cursor_y < first_row){
+        current_running->cursor_y = first_row;
+    }
+    if(current_running->cursor_y > last_row){
+        current_running->cursor_y = last_row;
+    }
+
+    if(ch == '\n'){
         current_running->cursor_x = 0;
-        if (current_running->cursor_y < SCREEN_HEIGHT)
-            current_running->cursor_y++;
-    }
-    else if (ch == '\b' || ch == '\177')
-    {	
+        current_running->cursor_y++;
+    }else if(ch=='\b' || ch=='\177'){
         // TODO: [P3] support backspace here
-    }
-    else
-    {
-        new_screen[SCREEN_LOC(current_running->cursor_x, current_running->cursor_y)] = ch;
-        if (++current_running->cursor_x >= SCREEN_WIDTH)
-        {
-            current_running->cursor_x = 0;
-            if (current_running->cursor_y < SCREEN_HEIGHT)
-                current_running->cursor_y++;
+        if(current_running->cursor_x > 0){
+            current_running->cursor_x--;
+        }else if(current_running->cursor_y > first_row){
+            current_running->cursor_y--;
+            current_running->cursor_x = SCREEN_WIDTH-1;
+        }else{
+            return;
         }
+
+        new_screen[SCREEN_LOC(current_running->cursor_x, current_running->cursor_y)] = ' ';
+    }else if(ch == '\r'){
+        current_running->cursor_x = 0;
+    }else{
+        new_screen[SCREEN_LOC(current_running->cursor_x, current_running->cursor_y)] = ch;
+
+        if(++current_running->cursor_x >= SCREEN_WIDTH){
+            current_running->cursor_x = 0;
+            current_running->cursor_y++;
+        }
+    }
+
+    // 到达区域底部后，只滚动当前区域。
+    if(current_running->cursor_y > last_row){
+        for(int y=first_row; y<last_row; ++y){
+            for(int x=0; x<SCREEN_WIDTH; ++x){
+                new_screen[SCREEN_LOC(x, y)] = new_screen[SCREEN_LOC(x, y+1)];
+            }
+        }
+
+        for(int x=0; x<SCREEN_WIDTH; ++x){
+            new_screen[SCREEN_LOC(x, last_row)] = ' ';
+        }
+
+        current_running->cursor_y = last_row;
     }
 }
 
