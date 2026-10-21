@@ -51,7 +51,7 @@ void screen_write_ch(char ch){
     if(ch == '\n'){
         current_running->cursor_x = 0;
         current_running->cursor_y++;
-    }else if(ch=='\b' || ch=='\177'){
+    }else if(ch=='\b' || ch==127){
         // TODO: [P3] support backspace here
         if(current_running->cursor_x > 0){
             current_running->cursor_x--;
