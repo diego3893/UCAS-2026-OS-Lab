@@ -237,10 +237,19 @@ pid_t do_exec(char *name, int argc, char **argv){
         return 0;
     }
 
-    // p3-task1 loader将程序加载到固定地址，无法并发
+    // // p3-task1 loader将程序加载到固定地址，无法并发
+    // for(int i=0; i<NUM_MAX_TASK; ++i){
+    //     if(pcb[i].status!=TASK_EXITED && pcb[i].task_id==task_id){
+    //         return 0;
+    //     }
+    // }
+    // 同程序已有存活实例时，共享现有映像
+    int already_exist = 0;
+
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(pcb[i].status!=TASK_EXITED && pcb[i].task_id==task_id){
-            return 0;
+            already_exist = 1;
+            break;
         }
     }
 
@@ -274,7 +283,12 @@ pid_t do_exec(char *name, int argc, char **argv){
     }
     reset_pcb(task);
 
-    ptr_t entry = load_task_img(tasks[task_id].task_name, program_count);
+    // ptr_t entry = load_task_img(tasks[task_id].task_name, program_count);
+
+    ptr_t entry = tasks[task_id].task_entry;
+    if(!already_exist){
+        entry = load_task_img(tasks[task_id].task_name, program_count);
+    }
 
     if(entry == 0){
         return 0;
@@ -439,12 +453,14 @@ long do_set_sche_workload(int workload){
  * @param task 进程pcb
  */
 static void terminate_process(pcb_t *task){
+    do_barrier_cancel_wait(&task->list);
     list_del(&task->list);
 
     task->status = TASK_EXITED;
     task->workload_valid = 0;
 
     do_mutex_release_all(task->pid);
+    do_mbox_release_all(task->pid);
 
     while(!list_empty(&task->wait_list)){
         do_unblock(task->wait_list.next);

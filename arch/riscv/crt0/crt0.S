@@ -7,14 +7,15 @@ ENTRY(_start)
     # addi sp, sp, -16
     # sd ra, 8(sp)
 
-    la t0, __bss_start
-    la t1, __BSS_END__
-clear_bss:
-    bgeu t0, t1, clear_bss_done
-    sd zero, 0(t0)
-    addi t0, t0, 8
-    j clear_bss
-clear_bss_done:
+#     la t0, __bss_start
+#     la t1, __BSS_END__
+# clear_bss:
+#     bgeu t0, t1, clear_bss_done
+#     sd zero, 0(t0)
+#     addi t0, t0, 8
+#     j clear_bss
+# clear_bss_done:
+# 已经在loader.c中清空bss，避免每次实例化都清空
 
     /* TODO: [p1-task3] enter main function */
     call main

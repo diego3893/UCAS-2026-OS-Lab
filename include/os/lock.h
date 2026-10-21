@@ -67,6 +67,11 @@ void do_mutex_release_all(pid_t pid);
 typedef struct barrier
 {
     // TODO [P3-TASK2 barrier]
+    int used; // 是否使用
+    int key; // 共享标识
+    int goal; // 目标进程数
+    int arrived; // 已有进程数
+    list_head block_queue; // 阻塞队列
 } barrier_t;
 
 #define BARRIER_NUM 16
@@ -75,13 +80,18 @@ void init_barriers(void);
 int do_barrier_init(int key, int goal);
 void do_barrier_wait(int bar_idx);
 void do_barrier_destroy(int bar_idx);
+void do_barrier_cancel_wait(list_node_t *pcb_node);
 
 typedef struct condition
 {
     // TODO [P3-TASK2 condition]
+    int used;
+    int key;
+    list_head block_queue;
 } condition_t;
 
 #define CONDITION_NUM 16
+#define MBOX_NAME_LEN 32
 
 void init_conditions(void);
 int do_condition_init(int key);
@@ -108,14 +118,27 @@ void do_semaphore_destroy(int sema_idx);
 typedef struct mailbox
 {
     // TODO [P3-TASK2 mailbox]
+    int used; // 是否被使用
+    int ref_count; // 正在使用该mbox的计数器
+    char name[MBOX_NAME_LEN]; // 名字
+
+    uint8_t buffer[MAX_MBOX_LENGTH]; // 缓冲区
+    int read_pos; // 读位置
+    int write_pos; // 写位置
+    int used_bytes; // 已使用的字节数
+
+    mutex_lock_t mutex; // 互斥锁
+    condition_t not_full; // 未满 
+    condition_t not_empty; // 非空
 } mailbox_t;
 
 #define MBOX_NUM 16
-void init_mbox();
+void init_mbox(void);
 int do_mbox_open(char *name);
 void do_mbox_close(int mbox_idx);
 int do_mbox_send(int mbox_idx, void * msg, int msg_length);
 int do_mbox_recv(int mbox_idx, void * msg, int msg_length);
+void do_mbox_release_all(pid_t pid);
 
 /************************************************************/
 

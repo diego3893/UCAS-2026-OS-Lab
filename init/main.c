@@ -126,6 +126,18 @@ static void init_syscall(void)
     syscall[SYSCALL_GETPID] = (long (*)())do_getpid;
     syscall[SYSCALL_READCH] = (long (*)())do_readch;
     syscall[SYSCALL_CLEAR] = (long (*)())screen_clear;
+    syscall[SYSCALL_BARR_INIT] = (long (*)())do_barrier_init;
+    syscall[SYSCALL_BARR_WAIT] = (long (*)())do_barrier_wait;
+    syscall[SYSCALL_BARR_DESTROY] = (long (*)())do_barrier_destroy;
+    syscall[SYSCALL_COND_INIT] = (long (*)())do_condition_init;
+    syscall[SYSCALL_COND_WAIT] = (long (*)())do_condition_wait;
+    syscall[SYSCALL_COND_SIGNAL] = (long (*)())do_condition_signal;
+    syscall[SYSCALL_COND_BROADCAST] = (long (*)())do_condition_broadcast;
+    syscall[SYSCALL_COND_DESTROY] = (long (*)())do_condition_destroy;
+    syscall[SYSCALL_MBOX_OPEN] = (long (*)())do_mbox_open;
+    syscall[SYSCALL_MBOX_CLOSE] = (long (*)())do_mbox_close;
+    syscall[SYSCALL_MBOX_SEND] = (long (*)())do_mbox_send;
+    syscall[SYSCALL_MBOX_RECV] = (long (*)())do_mbox_recv;
 }
 
 static long do_readch(void){
@@ -150,6 +162,9 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
 
     // Init lock mechanism o(´^｀)o
     init_locks();
+    init_barriers();
+    init_conditions();
+    init_mbox();
     printk("> [INIT] Lock mechanism initialization succeeded.\n");
 
     // Init interrupt (^_^)
