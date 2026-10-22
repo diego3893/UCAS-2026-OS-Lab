@@ -164,7 +164,7 @@ static void execute_command(char *line){
             return;
         }
 
-        sys_ps();
+        sys_ps(); // 显示进程列表
         return;
     }
 
@@ -174,7 +174,7 @@ static void execute_command(char *line){
             return;
         }
 
-        sys_clear();
+        sys_clear(); // 清屏
         sys_move_cursor(0, SHELL_BEGIN);
         printf("------------------- COMMAND -------------------\n");
         return;
@@ -186,7 +186,7 @@ static void execute_command(char *line){
             return;
         }
 
-        pid_t pid = sys_exec(tokens[1], count-1, &tokens[1]);
+        pid_t pid = sys_exec(tokens[1], count-1, &tokens[1]); // exec创建进程
 
         if(pid == 0){
             printf("exec failed.\n");
@@ -210,7 +210,7 @@ static void execute_command(char *line){
             return;
         }
 
-        if(sys_kill(pid)){
+        if(sys_kill(pid)){ // 杀进程
             printf("Killed pid=%d\n", pid);
         }else{
             printf("No such process.\n");
