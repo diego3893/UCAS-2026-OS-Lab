@@ -69,7 +69,7 @@ int main(int argc, char * argv[])
     }
 
     // Wait produce processes to exit
-    for (int i = 0; i < NUM_TC + 1; i++) {
+    for (int i = 0; i < consumer_count + 1; i++) {
         sys_waitpid(pids[i]);
     }
     
