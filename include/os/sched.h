@@ -101,7 +101,7 @@ typedef struct pcb
     uint32_t ticks_left; // 还剩几个时间片
 
     int task_id; // 对应tasks数组中的程序编号
-    int recycle_pending; // 退出切换完成前，禁止复用此槽位（p3-task1）
+    int recycle_pending; // 回收标记，1为需要回收
     int kill_pending; // 核之间的退出标记
 
     int cpu_mask; // 允许在哪些CPU核上运行
@@ -148,6 +148,7 @@ extern int do_kill(pid_t pid);
 extern int do_waitpid(pid_t pid);
 extern void do_process_show();
 extern pid_t do_getpid();
+void reap_exited(void);
 /************************************************************/
 
 #endif

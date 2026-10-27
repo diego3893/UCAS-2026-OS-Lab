@@ -61,13 +61,13 @@ static int bounded_strlen(const char *str, int limit){
  * @param task 任务对应的pcb
  */
 static void reset_pcb(pcb_t *task){
-    ptr_t kernel_base = task->kernel_stack_base;
-    ptr_t user_base = task->user_stack_base;
+    // ptr_t kernel_base = task->kernel_stack_base;
+    // ptr_t user_base = task->user_stack_base;
 
     memset(task, 0, sizeof(pcb_t));
 
-    task->kernel_stack_base = kernel_base;
-    task->user_stack_base = user_base;
+    // task->kernel_stack_base = kernel_base;
+    // task->user_stack_base = user_base;
     task->status = TASK_EXITED;
     task->task_id = -1;
     task->time_slice = 1;
@@ -98,13 +98,15 @@ static pcb_t *find_process(pid_t pid){
 }
 
 /**
- * @brief 标记可以被回收栈的进程pcb
+ * @brief 回收进程pcb
  * 
  */
-static void reap_exited(void){
+void reap_exited(void){
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(pcb[i].status==TASK_EXITED && pcb[i].recycle_pending && &pcb[i]!=current_running){
-            pcb[i].recycle_pending = 0;
+            freePage(pcb[i].kernel_stack_base);
+            freePage(pcb[i].user_stack_base);
+            reset_pcb(&pcb[i]);
         }
     }
 }
@@ -212,10 +214,7 @@ void init_processes(int tasknum){
 
     memset(pcb, 0, sizeof(pcb));
 
-    // p3-task1，只开pcb，清空，保留栈空间
     for(int i=0; i<NUM_MAX_TASK; ++i){
-        pcb[i].kernel_stack_base = allocKernelPage(1);
-        pcb[i].user_stack_base = allocUserPage(1);
         reset_pcb(&pcb[i]);
     }
 
@@ -315,6 +314,16 @@ pid_t do_exec(char *name, int argc, char **argv){
     }
 
     if(entry == 0){
+        return 0;
+    }
+
+    // 加载镜像之后先分配栈，再构造假现场
+    task->kernel_stack_base = allocKernelPage(1);
+    task->user_stack_base = allocUserPage(1);
+
+    if(task->kernel_stack_base==0 || task->user_stack_base==0){
+        task->recycle_pending = 1;
+        reap_exited();
         return 0;
     }
 
@@ -548,7 +557,7 @@ static void terminate_process(pcb_t *task){
         do_unblock(task->wait_list.next);
     }
 
-    task->recycle_pending = task==current_running;
+    task->recycle_pending = 1;
 }
 
 /**
