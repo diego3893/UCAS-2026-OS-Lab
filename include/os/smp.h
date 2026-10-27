@@ -2,7 +2,7 @@
 #define SMP_H
 
 #define NR_CPUS 2
-#define FINE_GRAINED_LOCK 1 // 0：大内核锁；1：细粒度锁
+#define FINE_GRAINED_LOCK 0 // 0：大内核锁；1：细粒度锁
 extern void smp_init();
 extern void wakeup_other_hart();
 extern uint64_t get_current_cpu_id();
