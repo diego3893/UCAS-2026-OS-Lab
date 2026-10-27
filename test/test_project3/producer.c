@@ -18,6 +18,23 @@ int main(int argc, char *argv[])
     int handle_lock = atoi(argv[3]);
     int * num_staff = (int *)(atoi(argv[4])); 
 
+    // P3-task5: perf mode
+    if(argc>5 && argv[5][0]=='1'){
+        while(1){
+            sys_mutex_acquire(handle_lock);
+
+            // 限制库存，避免生产者持续领先导致计数溢出。
+            while(*num_staff >= 1024){
+                sys_condition_wait(handle_cond, handle_lock);
+            }
+
+            (*num_staff)++;
+            sys_condition_broadcast(handle_cond);
+
+            sys_mutex_release(handle_lock);
+        }
+    }
+
     // Set random seed
     srand(clock());
 

@@ -7,6 +7,7 @@
 #include <assert.h>
 #include <screen.h>
 #include <csr.h>
+#include <os/smp.h>
 
 handler_t irq_table[IRQC_COUNT];
 handler_t exc_table[EXCC_COUNT];
@@ -40,7 +41,19 @@ void handle_irq_timer(regs_context_t *regs, uint64_t stval, uint64_t scause)
     // TODO: [p2-task4] clock interrupt handler.
     // Note: use bios_set_timer to reset the timer and remember to reschedule
     bios_set_timer(get_ticks()+TIMER_INTERVAL);
+    
+    #if FINE_GRAINED_LOCK
+        unlock_kernel();
+        lock_screen();
+    #endif
+
     screen_reflush();
+
+    #if FINE_GRAINED_LOCK
+        unlock_screen();
+        lock_kernel();
+    #endif
+
     check_sleeping();
     if(current_running->pid!=0 && current_running->ticks_left>1){
         current_running->ticks_left--;

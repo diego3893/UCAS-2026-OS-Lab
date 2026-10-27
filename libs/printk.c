@@ -45,6 +45,7 @@
 #include <os/sched.h>
 #include <os/irq.h>
 #include <os/kernel.h>
+#include <os/smp.h>
 
 static unsigned int mini_strlen(const char *s)
 {
@@ -274,10 +275,13 @@ static int _vprint(const char *fmt, va_list _va,
     return ret;
 }
 
-static void _output_wrapper(char *buff)
-{
+static void _output_wrapper(char *buff){
+    lock_screen();
+
     screen_write(buff);
     screen_reflush();
+
+    unlock_screen();
 }
 
 int vprintk(const char *fmt, va_list _va)

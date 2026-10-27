@@ -16,6 +16,8 @@ int main(int argc, char * argv[])
 #ifndef S_CORE
     assert(argc >= 1);
     int print_location = (argc == 1) ? 0 : atoi(argv[1]);
+    int performance = argc>2 && strcmp(argv[2], "perf")==0;
+    int consumer_count = performance ? 1 : NUM_TC;
 
     // Initialize condition
     int handle_cond = sys_condition_init(COND_KEY);
@@ -38,26 +40,32 @@ int main(int argc, char * argv[])
     assert(itoa(RESOURCE_ADDR, buf_resource, BUF_LEN, 10) != -1);
 
     // Start producer
-    char *argv_producer[5] = {"producer", \
-                              buf_location, \
-                              buf_cond_handle, \
-                              buf_lock_handle, \
-                              buf_resource \
-                              };
-    pids[0] = sys_exec(argv_producer[0], 5, argv_producer);
+    // char *argv_producer[5] = {"producer", \
+    //                           buf_location, \
+    //                           buf_cond_handle, \
+    //                           buf_lock_handle, \
+    //                           buf_resource \
+    //                           };
+    // pids[0] = sys_exec(argv_producer[0], 5, argv_producer);
+    char *argv_producer[6] = {"producer", buf_location, buf_cond_handle, buf_lock_handle, 
+        buf_resource, performance ? "1" : "0"};
+    pids[0] = sys_exec(argv_producer[0], performance ? 6 : 5, argv_producer);
 
     // Start consumers
-    for (int i = 1; i < NUM_TC + 1; i++)
+    for (int i = 1; i < consumer_count + 1; i++)
     {
         assert(itoa(print_location + i, buf_location, BUF_LEN, 10) != -1);
 
-        char *argv_consumer[5] = {"consumer", \
-                                  buf_location, \
-                                  buf_cond_handle, \
-                                  buf_lock_handle, \
-                                  buf_resource \
-                                  };
-        pids[i] = sys_exec(argv_consumer[0], 5, argv_consumer);
+        // char *argv_consumer[5] = {"consumer", \
+        //                           buf_location, \
+        //                           buf_cond_handle, \
+        //                           buf_lock_handle, \
+        //                           buf_resource \
+        //                           };
+        // pids[i] = sys_exec(argv_consumer[0], 5, argv_consumer);
+        char *argv_consumer[6] = {"consumer", buf_location, buf_cond_handle, buf_lock_handle, 
+            buf_resource, performance ? "1" : "0"};
+        pids[i] = sys_exec(argv_consumer[0], performance ? 6 : 5, argv_consumer);
     }
 
     // Wait produce processes to exit

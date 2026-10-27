@@ -5,10 +5,12 @@
 #include <os/kernel.h>
 
 static spin_lock_t kernel_lock;
+static spin_lock_t screen_lock;
 
 void smp_init(void){
     /* TODO: P3-TASK3 multicore*/
     spin_lock_init(&kernel_lock);
+    spin_lock_init(&screen_lock);
 }
 
 void wakeup_other_hart(void){
@@ -28,4 +30,16 @@ void lock_kernel(void){
 void unlock_kernel(void){
     /* TODO: P3-TASK3 multicore*/
     spin_lock_release(&kernel_lock);
+}
+
+void lock_screen(void){
+#if FINE_GRAINED_LOCK
+    spin_lock_acquire(&screen_lock);
+#endif
+}
+
+void unlock_screen(void){
+#if FINE_GRAINED_LOCK
+    spin_lock_release(&screen_lock);
+#endif
 }
