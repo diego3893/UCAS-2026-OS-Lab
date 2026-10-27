@@ -15,6 +15,9 @@ void interrupt_helper(regs_context_t *regs, uint64_t stval, uint64_t scause)
 {
     // TODO: [p2-task3] & [p2-task4] interrupt handler.
     // call corresponding handler by the value of `scause`
+    if(current_running->pid!=0 && current_running->kill_pending){ // 优先检查是否需要杀进程
+        do_exit();
+    }
     uint64_t cause = scause&(~SCAUSE_IRQ_FLAG);
 
     if(scause&SCAUSE_IRQ_FLAG){

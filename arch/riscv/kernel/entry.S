@@ -117,8 +117,8 @@
 .endm
 
 ENTRY(enable_preempt)
-  not t0, x0
-  csrs CSR_SIE, t0
+  li t0, SIE_STIE
+  csrw CSR_SIE, t0
   jr ra
 ENDPROC(enable_preempt)
 
@@ -188,6 +188,8 @@ ENDPROC(switch_to)
 ENTRY(ret_from_exception)
   /* TODO: [p2-task3] restore context via provided macro and return to sepc */
   /* HINT: remember to check your sp, does it point to the right address? */
+  call unlock_kernel
+  fence.i
   RESTORE_CONTEXT
   sret
 ENDPROC(ret_from_exception)
@@ -196,6 +198,8 @@ ENTRY(exception_handler_entry)
 
   /* TODO: [p2-task3] save context via the provided macro */
   SAVE_CONTEXT
+
+  call lock_kernel // 保存上下文时候，立刻上锁内核
 
   /* TODO: [p2-task3] load ret_from_exception into $ra so that we can return to
    * ret_from_exception when interrupt_help complete.

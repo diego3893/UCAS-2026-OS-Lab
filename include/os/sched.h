@@ -102,6 +102,7 @@ typedef struct pcb
 
     int task_id; // 对应tasks数组中的程序编号
     int recycle_pending; // 退出切换完成前，禁止复用此槽位（p3-task1）
+    int kill_pending; // 核之间的退出标记
 
 } pcb_t;
 
@@ -117,6 +118,7 @@ extern pid_t process_id;
 
 extern pcb_t pcb[NUM_MAX_TASK];
 extern pcb_t pid0_pcb;
+extern pcb_t secondary_idle_pcb;
 extern const ptr_t pid0_stack;
 
 extern void switch_to(pcb_t *prev, pcb_t *next);

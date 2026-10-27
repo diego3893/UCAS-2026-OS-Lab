@@ -17,6 +17,7 @@
 #include <type.h>
 #include <csr.h>
 #include <asm/regs.h>
+#include <os/smp.h>
 
 extern void ret_from_exception();
 static long do_readch(void);
@@ -147,8 +148,27 @@ static long do_readch(void){
 
 int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
 {
+    if(get_current_cpu_id() != 0){
+        current_running = &secondary_idle_pcb;
+
+        lock_kernel();
+
+        current_running->status = TASK_RUNNING;
+
+        // 从核只设置本核入口，不重新初始化全局中断表。
+        setup_exception();
+        bios_set_timer(get_ticks()+TIMER_INTERVAL);
+
+        printk("> [SMP] CPU1 entered main.\n");
+
+        unlock_kernel();
+
+        goto kernel_idle; // 前往使能设置
+    }
     // Init jump table provided by kernel and bios(ΦωΦ)
     init_jmptab();
+    
+    smp_init(); // 主核初始化大内核锁
 
     // Init task information (〃'▽'〃)
     int tasknum = init_task_info((uint32_t)app_info_offset, (int)tasknum_from_boot);
@@ -183,11 +203,18 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
     // NOTE: The function of sstatus.sie is different from sie's
     bios_set_timer(get_ticks()+TIMER_INTERVAL);
 
+    lock_kernel();
+    printk("> [SMP] CPU0 entered main.\n");
+    wakeup_other_hart();
+
+    unlock_kernel();
+
 
     // TODO: Load tasks by either task id [p1-task3] or task name [p1-task4],
     //   and then execute them.
 
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
+kernel_idle:
     while (1)
     {
         // If you do non-preemptive scheduling, it's used to surrender control

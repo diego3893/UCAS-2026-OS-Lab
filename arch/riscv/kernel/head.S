@@ -14,6 +14,10 @@ ENTRY(_start)
   csrw CSR_SIE, zero
   csrw CSR_SIP, zero
 
+// CPU1跳过bss初始化
+  csrr t2, CSR_SSCRATCH
+  bnez t2, clear_bss_done
+
   /* TODO: [p1-task2] clear BSS for flat non-ELF images */
   la t0, __bss_start
   la t1, __BSS_END__
@@ -26,6 +30,9 @@ ENTRY(_start)
 
   /* TODO: [p1-task2] setup C environment */
   li sp, KERNEL_STACK
+  slli t0, t2, 12 // t2是核号，1<<12为4096恰好一页
+  sub sp, sp, t0
+  // CPU0栈址0x50500000，CPU1栈址0x504ff000
   call main
 
 

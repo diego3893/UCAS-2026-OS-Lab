@@ -12,6 +12,7 @@
 #include <os/string.h>
 #include <asm/regs.h>
 #include <csr.h>
+#include <os/smp.h>
 
 #define MIN_TIME_SLICE 1
 #define MAX_TIME_SLICE 8
@@ -27,6 +28,7 @@ pcb_t pid0_pcb = {
     .kernel_sp = (ptr_t)pid0_stack,
     .user_sp = (ptr_t)pid0_stack
 };
+pcb_t secondary_idle_pcb;
 
 LIST_HEAD(ready_queue);
 LIST_HEAD(sleep_queue);
@@ -182,6 +184,18 @@ void init_processes(int tasknum){
 
     list_init(&pid0_pcb.list);
     list_init(&pid0_pcb.wait_list);
+
+    memset(&secondary_idle_pcb, 0, sizeof(pcb_t));
+    secondary_idle_pcb.pid = 0;
+    secondary_idle_pcb.task_id = -1;
+    secondary_idle_pcb.status = TASK_READY;
+    // 从核idle使用独立的栈
+    secondary_idle_pcb.kernel_stack_base = allocKernelPage(1);
+    secondary_idle_pcb.kernel_sp = secondary_idle_pcb.kernel_stack_base+PAGE_SIZE;
+    secondary_idle_pcb.user_sp = INIT_KERNEL_STACK-PAGE_SIZE; // 对应head.S中CPU1启动栈顶
+    list_init(&secondary_idle_pcb.list);
+    list_init(&secondary_idle_pcb.wait_list);
+
     list_init(&ready_queue);
     list_init(&sleep_queue);
 
@@ -324,8 +338,9 @@ void do_scheduler(void)
     }
 
     pcb_t *next;
-    if(list_empty(&ready_queue)){ // 空就绪队列不再轮询sleep queue，将pid0进行调度
-        next = &pid0_pcb;
+    if(list_empty(&ready_queue)){ // 空就绪队列不再轮询sleep queue，将每个核自己的idle进行调度
+        // next = &pid0_pcb;
+        next = get_current_cpu_id()==0 ? &pid0_pcb : &secondary_idle_pcb;
     }else{
         list_node_t *node = list_pop_front(&ready_queue);
         next = list_entry(node, pcb_t, list);
@@ -498,6 +513,10 @@ int do_kill(pid_t pid){
     }
     if(task == current_running){
         do_exit();
+        return 1;
+    }
+    if(task->status == TASK_RUNNING){ // 正在运行且不在本核，标记退出请求
+        task->kill_pending = 1;
         return 1;
     }
     terminate_process(task);
