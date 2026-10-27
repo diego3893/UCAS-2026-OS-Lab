@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <string.h>
 #include <ctype.h>
+#include <stddef.h>
 
 #define SHELL_BEGIN 20
 #define SHELL_BUFFER_SIZE 256
@@ -113,6 +114,49 @@ static int parse_pid(const char *str, pid_t *pid){
 }
 
 /**
+ * @brief 解析十六进制CPU掩码
+ *
+ * @param str 输入串
+ * @param mask 掩码
+ * @return int 1成功，0失败
+ */
+static int parse_mask(const char *str, int *mask){
+    int value = 0;
+
+    if(str[0]=='0' && (str[1]=='x' || str[1]=='X')){
+        str += 2;
+    }
+    if(*str == '\0'){
+        return 0;
+    }
+
+    while(*str){
+        int digit;
+
+        if(*str>='0' && *str<='9'){
+            digit = *str-'0';
+        }else if(*str>='a' && *str<='f'){
+            digit = *str-'a'+10;
+        }else if(*str>='A' && *str<='F'){
+            digit = *str-'A'+10;
+        }else{
+            return 0;
+        }
+        value = value*16+digit;
+
+        if(value > 3){
+            return 0;
+        }
+        str++;
+    }
+    if(value == 0){
+        return 0;
+    }
+    *mask = value;
+    return 1;
+}
+
+/**
  * @brief 解析并执行一条完整命令
  * 
  * @param line 命令行
@@ -177,6 +221,43 @@ static void execute_command(char *line){
         sys_clear(); // 清屏
         sys_move_cursor(0, SHELL_BEGIN);
         printf("------------------- COMMAND -------------------\n");
+        return;
+    }
+
+    if(strcmp(tokens[0], "taskset") == 0){
+        int mask;
+        pid_t pid = 0;
+        char *name = NULL;
+
+        if(count==4 && strcmp(tokens[1], "-p")==0){
+            if(!parse_mask(tokens[2], &mask) || !parse_pid(tokens[3], &pid)){
+                printf("Usage: taskset -p mask positive_pid\n");
+                return;
+            }
+        }else if(count == 3){
+            if(!parse_mask(tokens[1], &mask)){
+                printf("Usage: taskset mask name\n");
+                return;
+            }
+            name = tokens[2];
+        }else{
+            printf("Usage: taskset mask name | taskset -p mask pid\n");
+            return;
+        }
+
+        pid_t result = sys_taskset(mask, pid, name);
+
+        if(result == 0){
+            printf("taskset failed.\n");
+            return;
+        }
+
+        if(pid == 0){
+            printf("Started pid=%d, mask=0x%x\n", result, mask);
+        }else{
+            printf("Set pid=%d, mask=0x%x\n", result, mask);
+        }
+
         return;
     }
 

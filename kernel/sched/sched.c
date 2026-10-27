@@ -72,6 +72,8 @@ static void reset_pcb(pcb_t *task){
     task->task_id = -1;
     task->time_slice = 1;
     task->ticks_left = 1;
+    task->cpu_mask = (1<<NR_CPUS)-1; // 默认0x03
+    task->cpu_id = -1;
 
     list_init(&task->list);
     list_init(&task->wait_list);
@@ -181,6 +183,8 @@ void init_processes(int tasknum){
     pid0_pcb.user_sp = pid0_stack;
     pid0_pcb.task_id = -1;
     pid0_pcb.status = TASK_RUNNING;
+    pid0_pcb.cpu_mask = 1;
+    pid0_pcb.cpu_id = 0;
 
     list_init(&pid0_pcb.list);
     list_init(&pid0_pcb.wait_list);
@@ -193,6 +197,8 @@ void init_processes(int tasknum){
     secondary_idle_pcb.kernel_stack_base = allocKernelPage(1);
     secondary_idle_pcb.kernel_sp = secondary_idle_pcb.kernel_stack_base+PAGE_SIZE;
     secondary_idle_pcb.user_sp = INIT_KERNEL_STACK-PAGE_SIZE; // 对应head.S中CPU1启动栈顶
+    secondary_idle_pcb.cpu_mask = 2;
+    secondary_idle_pcb.cpu_id = -1; // 从核此时未运行idle执行流
     list_init(&secondary_idle_pcb.list);
     list_init(&secondary_idle_pcb.wait_list);
 
@@ -297,6 +303,10 @@ pid_t do_exec(char *name, int argc, char **argv){
     }
     reset_pcb(task);
 
+    if(current_running->pid != 0){
+        task->cpu_mask = current_running->cpu_mask; // 普通子进程继承父进程的CPU掩码
+    }
+
     // ptr_t entry = load_task_img(tasks[task_id].task_name, program_count);
 
     ptr_t entry = tasks[task_id].task_entry;
@@ -319,6 +329,48 @@ pid_t do_exec(char *name, int argc, char **argv){
     return task->pid;
 }
 
+/**
+ * @brief 创建并绑定进程，或修改已有进程的CPU掩码
+ *
+ * @param mask CPU掩码
+ * @param pid 0为创建新进程，否则修改已有pcb
+ * @param name 创建时的程序名，如果是修改则可以为NULL
+ * @return pid_t 返回pid，失败为0
+ */
+pid_t do_taskset(int mask, pid_t pid, char *name){
+    if(mask<1 || mask>((1<<NR_CPUS)-1) || pid<0){
+        return 0;
+    }
+
+    if(pid == 0){ // 创建进程
+        if(name == NULL){
+            return 0;
+        }
+        char *argv[] = {name};
+        pid = do_exec(name, 1, argv);
+        if(pid == 0){
+            return 0;
+        }
+    }
+
+    pcb_t *task = find_process(pid);
+    if(task == NULL){
+        return 0;
+    }
+    task->cpu_mask = mask;
+
+    // 正在运行，但新掩码和当前核冲突
+    if(task->status==TASK_RUNNING && !(mask&(1U<<task->cpu_id))){
+        task->ticks_left = 1;
+        if(task == current_running){ // 本核进程，立即调度
+            do_scheduler();
+        }
+        // 另一核的进程在下一次定时器中断时重新调度
+    }
+
+    return pid;
+}
+
 void do_scheduler(void)
 {
     // TODO: [p2-task3] Check sleep queue to wake up PCBs
@@ -330,6 +382,10 @@ void do_scheduler(void)
 
     // TODO: [p2-task1] Modify the current_running pointer.
     pcb_t *prev = current_running;
+
+    int cpu_id = (int)get_current_cpu_id();
+    prev->cpu_id = -1; // 重置CPU状态
+
     if(prev->status == TASK_RUNNING){
         prev->status = TASK_READY;
         if(prev->pid != 0){
@@ -337,13 +393,23 @@ void do_scheduler(void)
         }
     }
 
-    pcb_t *next;
-    if(list_empty(&ready_queue)){ // 空就绪队列不再轮询sleep queue，将每个核自己的idle进行调度
-        // next = &pid0_pcb;
-        next = get_current_cpu_id()==0 ? &pid0_pcb : &secondary_idle_pcb;
-    }else{
-        list_node_t *node = list_pop_front(&ready_queue);
-        next = list_entry(node, pcb_t, list);
+    // pcb_t *next;
+    // if(list_empty(&ready_queue)){ // 空就绪队列不再轮询sleep queue，将每个核自己的idle进行调度
+    //     // next = &pid0_pcb;
+    //     next = get_current_cpu_id()==0 ? &pid0_pcb : &secondary_idle_pcb;
+    // }else{
+    //     list_node_t *node = list_pop_front(&ready_queue);
+    //     next = list_entry(node, pcb_t, list);
+    // }
+    pcb_t *next = cpu_id==0 ? &pid0_pcb : &secondary_idle_pcb;
+    // 选取第一个可以使用本核的进程进行调度
+    for(list_node_t *node=ready_queue.next; node!=&ready_queue; node=node->next){
+        pcb_t *task = list_entry(node, pcb_t, list);
+        if(task->cpu_mask&(1U<<cpu_id)){
+            next = task;
+            list_del(node);
+            break;
+        }
     }
 
     if(next->time_slice == 0){
@@ -352,6 +418,7 @@ void do_scheduler(void)
 
     next->ticks_left = next->time_slice;
     next->status = TASK_RUNNING;
+    next->cpu_id = cpu_id;
     current_running = next;
 
     if(prev == next){
@@ -554,17 +621,17 @@ void do_process_show(void){
         "EXITED"
     };
 
-    printk("PID  STATUS  NAME\n");
-    printk("0  %s  idle\n", status_names[pid0_pcb.status]);
+    printk("PID  STATUS  MASK  CPU  NAME\n");
+    printk("0  %s  0x%x  %d  idle0\n", status_names[pid0_pcb.status], pid0_pcb.cpu_mask, pid0_pcb.cpu_id);
+    printk("0  %s  0x%x  %d  idle1\n", 
+        status_names[secondary_idle_pcb.status], secondary_idle_pcb.cpu_mask, secondary_idle_pcb.cpu_id);
 
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(pcb[i].status == TASK_EXITED){
             continue;
         }
-
-        printk("%d  %s  %s\n",
-               pcb[i].pid,
-               status_names[pcb[i].status],
-               tasks[pcb[i].task_id].task_name);
+        printk("%d  %s  0x%x  %d  %s\n", 
+            pcb[i].pid, status_names[pcb[i].status], pcb[i].cpu_mask, pcb[i].cpu_id, 
+            tasks[pcb[i].task_id].task_name);
     }
 }

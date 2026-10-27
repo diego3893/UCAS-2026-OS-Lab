@@ -16,6 +16,7 @@ int sys_mutex_init(int key);
 void sys_mutex_acquire(int mutex_idx);
 void sys_mutex_release(int mutex_idx);
 void sys_set_sche_workload(int workload);
+pid_t sys_taskset(int mask, pid_t pid, char *name);
 
 /************************************************************/
 /* TODO: [P3 task1] ps, getchar */

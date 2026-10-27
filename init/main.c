@@ -139,6 +139,7 @@ static void init_syscall(void)
     syscall[SYSCALL_MBOX_CLOSE] = (long (*)())do_mbox_close;
     syscall[SYSCALL_MBOX_SEND] = (long (*)())do_mbox_send;
     syscall[SYSCALL_MBOX_RECV] = (long (*)())do_mbox_recv;
+    syscall[SYSCALL_TASKSET] = (long (*)())do_taskset;
 }
 
 static long do_readch(void){
@@ -154,6 +155,7 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
         lock_kernel();
 
         current_running->status = TASK_RUNNING;
+        current_running->cpu_id = (int)get_current_cpu_id();
 
         // 从核只设置本核入口，不重新初始化全局中断表。
         setup_exception();

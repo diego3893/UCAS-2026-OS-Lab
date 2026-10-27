@@ -104,6 +104,9 @@ typedef struct pcb
     int recycle_pending; // 退出切换完成前，禁止复用此槽位（p3-task1）
     int kill_pending; // 核之间的退出标记
 
+    int cpu_mask; // 允许在哪些CPU核上运行
+    int cpu_id; // 当前运行的核号，没有运行时为-1
+
 } pcb_t;
 
 /* ready queue to run */
@@ -131,6 +134,7 @@ void do_unblock(list_node_t *);
 long do_set_sche_workload(int workload);
 
 void init_processes(int tasknum);
+extern pid_t do_taskset(int mask, pid_t pid, char *name);
 
 /************************************************************/
 /* TODO [P3-TASK1] exec exit kill waitpid ps*/
