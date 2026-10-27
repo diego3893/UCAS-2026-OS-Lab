@@ -10,5 +10,6 @@ extern void lock_kernel();
 extern void unlock_kernel();
 extern void lock_screen(void);
 extern void unlock_screen(void);
+extern int try_lock_screen(void);
 
 #endif /* SMP_H */

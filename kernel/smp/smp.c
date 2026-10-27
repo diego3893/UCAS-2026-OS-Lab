@@ -43,3 +43,11 @@ void unlock_screen(void){
     spin_lock_release(&screen_lock);
 #endif
 }
+
+int try_lock_screen(void){
+#if FINE_GRAINED_LOCK
+    return spin_lock_try_acquire(&screen_lock);
+#else
+    return 1;
+#endif
+}

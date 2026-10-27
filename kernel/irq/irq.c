@@ -42,15 +42,17 @@ void handle_irq_timer(regs_context_t *regs, uint64_t stval, uint64_t scause)
     // Note: use bios_set_timer to reset the timer and remember to reschedule
     
     #if FINE_GRAINED_LOCK
-        unlock_kernel();
-        lock_screen();
-    #endif
+        // 定时器只尝试获取屏幕锁，无法获取则跳过本次刷新
+        if(try_lock_screen()){
+            unlock_kernel();
 
-    screen_reflush();
+            screen_reflush();
 
-    #if FINE_GRAINED_LOCK
-        unlock_screen();
-        lock_kernel();
+            unlock_screen();
+            lock_kernel();
+        }
+    #else
+        screen_reflush();
     #endif
 
     check_sleeping();
