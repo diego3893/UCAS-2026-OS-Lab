@@ -161,6 +161,8 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
         setup_exception();
         bios_set_timer(get_ticks()+TIMER_INTERVAL);
 
+        current_running->cursor_x = pid0_pcb.cursor_x;
+        current_running->cursor_y = pid0_pcb.cursor_y;
         printk("> [SMP] CPU1 entered main.\n");
 
         unlock_kernel();
