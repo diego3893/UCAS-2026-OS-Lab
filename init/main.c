@@ -90,6 +90,17 @@ static void init_syscall(void)
 }
 /************************************************************/
 
+/*
+ * Once a CPU core calls this function,
+ * it will stop executing!
+ */
+static void kernel_brake(void)
+{
+    disable_interrupt();
+    while (1)
+        __asm__ volatile("wfi");
+}
+
 int main(void)
 {
     // Init jump table provided by kernel and bios(ΦωΦ)
@@ -120,6 +131,17 @@ int main(void)
     // Init screen (QAQ)
     init_screen();
     printk("> [INIT] SCREEN initialization succeeded.\n");
+
+    /*
+     * Just start kernel with VM and print this string
+     * in the first part of task 1 of project 4.
+     * NOTE: if you use SMP, then every CPU core should call
+     *  `kernel_brake()` to stop executing!
+     */
+    printk("> [INIT] CPU #%u has entered kernel with VM!\n",
+        (unsigned int)get_current_cpu_id());
+    // TODO: [p4-task1 cont.] remove the brake and continue to start user processes.
+    kernel_brake();
 
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
