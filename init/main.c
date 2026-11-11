@@ -147,7 +147,18 @@ static long do_readch(void){
 }
 /************************************************************/
 
-int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
+/*
+ * Once a CPU core calls this function,
+ * it will stop executing!
+ */
+static void kernel_brake(void)
+{
+    disable_interrupt();
+    while (1)
+        __asm__ volatile("wfi");
+}
+
+int main(void)
 {
     if(get_current_cpu_id() != 0){
         current_running = &secondary_idle_pcb;
@@ -175,7 +186,9 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
     smp_init(); // 主核初始化大内核锁
 
     // Init task information (〃'▽'〃)
-    int tasknum = init_task_info((uint32_t)app_info_offset, (int)tasknum_from_boot);
+    uint32_t app_info_offset = *(volatile uint32_t*)pa2kva(0x502001f4UL);
+    uint16_t tasknum_from_boot = *(volatile uint16_t*)pa2kva(0x502001faUL);
+    int tasknum = init_task_info(app_info_offset, (int)tasknum_from_boot);
 
     // Init Process Control Blocks |•'-'•) ✧
     init_pcb(tasknum);
@@ -202,6 +215,17 @@ int main(uint64_t app_info_offset, uint64_t tasknum_from_boot)
     // Init screen (QAQ)
     init_screen();
     printk("> [INIT] SCREEN initialization succeeded.\n");
+
+    /*
+     * Just start kernel with VM and print this string
+     * in the first part of task 1 of project 4.
+     * NOTE: if you use SMP, then every CPU core should call
+     *  `kernel_brake()` to stop executing!
+     */
+    printk("> [INIT] CPU #%u has entered kernel with VM!\n",
+        (unsigned int)get_current_cpu_id());
+    // TODO: [p4-task1 cont.] remove the brake and continue to start user processes.
+    kernel_brake();
 
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's

@@ -2,7 +2,7 @@
 #include <asm/biosdef.h>
 #include <os/lock.h>
 
-#define BIOS_FUNC_ENTRY 0x50150000
+#define BIOS_FUNC_ENTRY 0xffffffc050150000
 #define IGNORE 0
 
 static spin_lock_t bios_lock = {
