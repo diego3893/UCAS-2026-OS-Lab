@@ -5,7 +5,7 @@
 .equ os_size_loc, 0x502001fc
 
 // kernel address (move kernel to here, and jmp here to start kernel)
-.equ kernel, 0x50201000
+.equ kernel, 0x50202000
 
 // BIOS function entry (jump here to use BIOS APIs)
 .equ bios_func_entry, 0x50150000
@@ -32,13 +32,40 @@ main:
 	jal bios_func_entry
 
 	// TODO: [p1-task2] call BIOS to read kernel in SD card
-	li a0, kernel
-	li t0, os_size_loc
-	lhu a1, 0(t0)
-	li a2, 1
-	li a7, BIOS_SDREAD
-	jal bios_func_entry
+	# li a0, kernel
+	# li t0, os_size_loc
+	# lhu a1, 0(t0)
+	# li a2, 1
+	# li a7, BIOS_SDREAD
+	# jal bios_func_entry
+	// 改为分批次读取，每次最多4个sector
+	li s0, kernel
+    li t0, os_size_loc
+    lhu s1, 0(t0)
+    li s2, 1
+	// s1: 剩余扇区数，s2: 下一批的起始sector，s3: 本批次sector数量，s0: 下一批数据存放地址
 
+read_kernel_loop:
+    beqz s1, read_kernel_done
+
+    li s3, 64
+    bgeu s1, s3, read_kernel_chunk_ready
+    mv s3, s1
+
+read_kernel_chunk_ready:
+    mv a0, s0
+    mv a1, s3
+    mv a2, s2
+    li a7, BIOS_SDREAD
+    jal bios_func_entry
+
+    slli t0, s3, 9 // 扇区转字节数
+    add s0, s0, t0
+    sub s1, s1, s3
+    add s2, s2, s3
+    j read_kernel_loop
+
+read_kernel_done:
 
 	// TODO: [p1-task4] load task-related arguments and pass them to kernel
 	li t0, app_info_offset_loc

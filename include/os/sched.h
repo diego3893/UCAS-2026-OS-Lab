@@ -107,6 +107,7 @@ typedef struct pcb
     int cpu_mask; // 允许在哪些CPU核上运行
     int cpu_id; // 当前运行的核号，没有运行时为-1
 
+    uintptr_t pgdir; // 根页表的内核虚拟地址
 } pcb_t;
 
 /* ready queue to run */

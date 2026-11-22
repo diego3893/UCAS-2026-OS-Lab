@@ -6,7 +6,7 @@
 #include <asm.h>
 #include <csr.h>
 
-#define KERNEL_STACK		0x50500000
+#define KERNEL_STACK 0xffffffc050500000
 
 .section ".entry_function","ax"
 ENTRY(_start)
@@ -32,7 +32,7 @@ ENTRY(_start)
   li sp, KERNEL_STACK
   slli t0, t2, 12 // t2是核号，1<<12为4096恰好一页
   sub sp, sp, t0
-  // CPU0栈址0x50500000，CPU1栈址0x504ff000
+  // CPU0栈址0x50500000，CPU1栈址0x504ff000，P4变为KVA
   call main
 
 

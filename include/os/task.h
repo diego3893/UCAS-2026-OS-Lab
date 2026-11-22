@@ -20,6 +20,7 @@ typedef struct {
     uint32_t task_offset;
     uint32_t task_size;
     uint64_t task_entry;
+    uint64_t task_memsz;
 } task_info_t;
 
 extern task_info_t tasks[TASK_MAXNUM];

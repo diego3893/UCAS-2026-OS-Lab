@@ -7,7 +7,8 @@
 #include <csr.h>
 
 /* maybe you need another stack for booting? */
-.equ boot_stack_top_base, 0x50202000
+# .equ boot_stack_top_base, 0x50202000
+.equ boot_stack_top_base, 0x50f00000
 
 .section ".bootkernel_entry","ax"
 ENTRY(_boot)
@@ -17,12 +18,17 @@ ENTRY(_boot)
    */
 
   /* Mask all interrupts */
+  li t0, SR_SIE
+  csrc CSR_SSTATUS, t0
   csrw CSR_SIE, zero
   csrw CSR_SIP, zero
 
-  la sp, boot_stack_top_base
+  # csrr a0, CSR_MHARTID 
+  csrr a0, CSR_SSCRATCH
 
-  csrr a0, CSR_MHARTID 
+  li sp, boot_stack_top_base
+  slli t0, a0, 12
+  sub sp, sp, t0
 
   // this will never return
   call boot_kernel

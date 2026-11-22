@@ -200,6 +200,10 @@ ENTRY(exception_handler_entry)
   /* TODO: [p2-task3] save context via the provided macro */
   SAVE_CONTEXT
 
+  // P4：现有系统调用直接访问用户缓冲区，进入内核C代码前打开SUM
+  li t0, SR_SUM
+  csrs CSR_SSTATUS, t0
+
   call lock_kernel // 保存上下文时候，立刻上锁内核
 
   /* TODO: [p2-task3] load ret_from_exception into $ra so that we can return to

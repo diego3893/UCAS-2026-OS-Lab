@@ -25,6 +25,12 @@ static long do_readch(void);
 // Task info array
 task_info_t tasks[TASK_MAXNUM];
 
+// 从核已进入高地址代码和高地址栈
+static unsigned int cpu1_high_ready;
+
+// 主核已撤销临时低地址映射
+static unsigned int temporary_mapping_removed;
+
 
 static void init_jmptab(void)
 {
@@ -50,8 +56,7 @@ static void init_jmptab(void)
 
 }
 
-static int init_task_info(uint32_t app_info_offset, int tasknum)
-{
+static int init_task_info(uint32_t app_info_offset, int tasknum){
     // TODO: [p1-task4] Init 'tasks' array via reading app-info sector
     // NOTE: You need to get some related arguments from bootblock first
     if(tasknum<=0 || tasknum>TASK_MAXNUM){
@@ -59,13 +64,9 @@ static int init_task_info(uint32_t app_info_offset, int tasknum)
     }
 
     uint32_t info_size = tasknum*sizeof(task_info_t);
-    uint32_t block_id = app_info_offset/SECTOR_SIZE;
-    uint32_t block_offset = app_info_offset%SECTOR_SIZE;
-    uint32_t info_sectors = NBYTES2SEC(block_offset+info_size);
-
-    bios_sd_read(TASK_BUFFER_BASE, info_sectors, block_id);
-    memcpy((uint8_t*)tasks, (uint8_t*)(TASK_BUFFER_BASE+block_offset), info_size);
-
+    if(read_image_bytes(tasks, app_info_offset, info_size) != 0){
+        return 0;
+    }
     return tasknum;
 }
 
@@ -158,10 +159,17 @@ static void kernel_brake(void)
         __asm__ volatile("wfi");
 }
 
-int main(void)
-{
+int main(void){
+    asm volatile("csrs sstatus, %0" :: "r"((unsigned long)SR_SUM) : "memory");
+
     if(get_current_cpu_id() != 0){
         current_running = &secondary_idle_pcb;
+        // 从head.S进入这里时，PC和SP均已使用高地址
+        __atomic_store_n(&cpu1_high_ready, 1, __ATOMIC_RELEASE);
+        while(!__atomic_load_n(&temporary_mapping_removed, __ATOMIC_ACQUIRE)){
+            asm volatile("nop");
+        }
+        local_flush_tlb_all();
 
         lock_kernel();
 
@@ -175,24 +183,23 @@ int main(void)
         current_running->cursor_x = pid0_pcb.cursor_x;
         current_running->cursor_y = pid0_pcb.cursor_y;
         printk("> [SMP] CPU1 entered main.\n");
+        printk("> [INIT] CPU #%u has entered kernel with VM!\n",
+               (unsigned int)get_current_cpu_id());
 
         unlock_kernel();
 
         goto kernel_idle; // 前往使能设置
     }
+    current_running = &pid0_pcb;
     // Init jump table provided by kernel and bios(ΦωΦ)
     init_jmptab();
-    
+
     smp_init(); // 主核初始化大内核锁
 
     // Init task information (〃'▽'〃)
     uint32_t app_info_offset = *(volatile uint32_t*)pa2kva(0x502001f4UL);
     uint16_t tasknum_from_boot = *(volatile uint16_t*)pa2kva(0x502001faUL);
     int tasknum = init_task_info(app_info_offset, (int)tasknum_from_boot);
-
-    // Init Process Control Blocks |•'-'•) ✧
-    init_pcb(tasknum);
-    printk("> [INIT] PCB initialization succeeded.\n");
 
     // Read CPU frequency (｡•ᴗ-)_
     time_base = bios_read_fdt(TIMEBASE);
@@ -216,16 +223,37 @@ int main(void)
     init_screen();
     printk("> [INIT] SCREEN initialization succeeded.\n");
 
+    // Init Process Control Blocks |•'-'•) ✧
+    // 全局对象初始化完成后再创建Shell，此时尚未开始调度
+    init_pcb(tasknum);
+    printk("> [INIT] PCB initialization succeeded.\n");
+
+    // CPU1仍在Bootblock等待，唤醒它，进入高地址
+    wakeup_other_hart();
+
+    while(!__atomic_load_n(&cpu1_high_ready, __ATOMIC_ACQUIRE)){
+        asm volatile("nop");
+    }
+
+    // 两核均已使用高地址PC/SP，现在可以撤销临时恒等映射。
+    PTE *kernel_pgdir = (PTE*)pa2kva(PGDIR_PA);
+    kernel_pgdir[(0x50000000UL>>30)&0x1ffUL] = 0;
+
+    local_flush_tlb_all();
+    __atomic_store_n(&temporary_mapping_removed, 1, __ATOMIC_RELEASE);
+
     /*
      * Just start kernel with VM and print this string
      * in the first part of task 1 of project 4.
      * NOTE: if you use SMP, then every CPU core should call
      *  `kernel_brake()` to stop executing!
      */
+    lock_kernel();
     printk("> [INIT] CPU #%u has entered kernel with VM!\n",
-        (unsigned int)get_current_cpu_id());
+           (unsigned int)get_current_cpu_id());
     // TODO: [p4-task1 cont.] remove the brake and continue to start user processes.
-    kernel_brake();
+    // kernel_brake(); // 完整Task1继续运行用户进程。
+    unlock_kernel();
 
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
@@ -233,18 +261,15 @@ int main(void)
 
     lock_kernel();
     printk("> [SMP] CPU0 entered main.\n");
-    wakeup_other_hart();
-
+    // wakeup_other_hart();
     unlock_kernel();
-
 
     // TODO: Load tasks by either task id [p1-task3] or task name [p1-task4],
     //   and then execute them.
 
     // Infinite while loop, where CPU stays in a low-power state (QAQQQQQQQQQQQ)
 kernel_idle:
-    while (1)
-    {
+    while(1){
         // If you do non-preemptive scheduling, it's used to surrender control
         // do_scheduler();
 

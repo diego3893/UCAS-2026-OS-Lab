@@ -33,8 +33,15 @@
 #define MAP_USER 2
 #define MEM_SIZE 32
 #define PAGE_SIZE 4096 // 4K
-#define INIT_KERNEL_STACK 0xffffffc052000000
-#define FREEMEM_KERNEL (INIT_KERNEL_STACK+PAGE_SIZE)
+// 与head.S中两核实际使用的高地址栈保持一致
+#define INIT_KERNEL_STACK 0xffffffc0504ff000UL
+
+// 页分配区域与启动栈、启动页表分开
+#define FREEMEM_KERNEL 0xffffffc052000000UL
+#define FREEMEM_END 0xffffffc060000000UL
+
+// sv39低半区地址上界
+#define USER_VA_LIMIT (1UL<<38)
 
 /* Rounding; only works for n = power of two */
 #define ROUND(a, n)     (((((uint64_t)(a))+(n)-1)) & ~((n)-1))
@@ -62,6 +69,8 @@ extern ptr_t allocLargePage(int numPage);
 extern void* kmalloc(size_t size);
 extern void share_pgtable(uintptr_t dest_pgdir, uintptr_t src_pgdir);
 extern uintptr_t alloc_page_helper(uintptr_t va, uintptr_t pgdir);
+PTE *walk_user_pte(uintptr_t pgdir, uintptr_t va, int create);
+void free_user_pgdir(uintptr_t pgdir);
 
 // TODO [P4-task4]: shm_page_get/dt */
 uintptr_t shm_page_get(int key);

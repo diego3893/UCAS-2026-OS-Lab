@@ -30,6 +30,7 @@ typedef struct {
     uint32_t task_offset;
     uint32_t task_size;
     uint64_t task_entry;
+    uint64_t task_memsz;
 } task_info_t;
 
 #define TASK_MAXNUM 16
@@ -130,14 +131,49 @@ static void create_image(int nfiles, char *files[])
         }
 
         uint32_t file_start = (uint32_t)(*target_phyaddr);
+        uint64_t file_memsz = 0;
 
         /* for each program header */
-        for (int ph = 0; ph < ehdr.e_phnum; ph++) {
+        for(int ph=0; ph<ehdr.e_phnum; ++ph){
 
             /* read program header */
             read_phdr(&phdr, fp, ph, ehdr);
+            if(phdr.p_type != PT_LOAD){
+                continue;
+            }
 
-            if (phdr.p_type != PT_LOAD) continue;
+            if(phdr.p_filesz>phdr.p_memsz || phdr.p_memsz>UINT64_MAX-phdr.p_vaddr || phdr.p_vaddr<ehdr.e_entry){
+                error("%s: invalid load segment\n", *files);
+            }
+
+            uint64_t segment_end = phdr.p_vaddr+phdr.p_memsz; // 当前段结束位置
+            uint64_t segment_span = segment_end-ehdr.e_entry; // 计算到起始位置之间的跨度
+
+            if(segment_span > file_memsz){ // 取最大值，作为所需要的memsz。此时bss段已被计入
+                file_memsz = segment_span;
+            }
+
+            // kernel和bss不能覆盖head.S使用的两页启动栈
+            if(fidx==1 && segment_end>0xffffffc0504fe000UL){
+                error("kernel overlaps bootstrap stacks\n");
+            }
+
+            // 纯bss段
+            if(phdr.p_filesz == 0){
+                continue;
+            }
+
+            uint64_t relative = phdr.p_vaddr-ehdr.e_entry; // 相对程序起始的偏移
+            if(relative > INT32_MAX){
+                error("%s: image is too large\n", *files);
+            }
+            uint64_t wanted = (uint64_t)file_start+relative; // 写入程序段的位置
+            if(wanted<(uint64_t)*target_phyaddr || wanted>INT32_MAX || phdr.p_filesz>INT32_MAX-wanted){
+                error("%s: overlapping or oversized load segment\n", *files);
+            }
+
+            // 保留各LOAD段之间的地址间隔，使磁盘偏移与程序内偏移一致。
+            write_padding(target_img, target_phyaddr, (int)wanted);
 
             /* write segment to the image */
             write_segment(phdr, fp, target_img, target_phyaddr);
@@ -183,15 +219,16 @@ static void create_image(int nfiles, char *files[])
         }else if(fidx == 1){
             nbytes_kernel = (int)file_size;
         }else{
-            if(file_size > TASK_SIZE){
-                error("%s is larger than its memory area\n", *files);
-            }
+            // if(file_size > TASK_SIZE){
+            //     error("%s is larger than its memory area\n", *files);
+            // }
 
             strncpy(taskinfo[taskidx].task_name, *files, TASK_NAME_LEN-1);
             taskinfo[taskidx].task_name[TASK_NAME_LEN-1] = '\0';
             taskinfo[taskidx].task_offset = file_start;
             taskinfo[taskidx].task_size = file_size;
             taskinfo[taskidx].task_entry = get_entrypoint(ehdr);
+            taskinfo[taskidx].task_memsz = file_memsz;
         }
 
         fclose(fp);
@@ -202,6 +239,10 @@ static void create_image(int nfiles, char *files[])
     fwrite(taskinfo, sizeof(task_info_t), tasknum, kernel_img);
     kernel_phyaddr += sizeof(task_info_t)*tasknum;
 
+    // Makefile从第2048扇区开始放user_image，内核及任务信息不能超过
+    if(kernel_phyaddr > 2048*SECTOR_SIZE){
+        error("kernel image overlaps user_image\n");
+    }
     int kernel_image_end = NBYTES2SEC(kernel_phyaddr)*SECTOR_SIZE;
     write_padding(kernel_img, &kernel_phyaddr, kernel_image_end);
 

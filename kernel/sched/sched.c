@@ -105,7 +105,7 @@ void reap_exited(void){
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(pcb[i].status==TASK_EXITED && pcb[i].recycle_pending && &pcb[i]!=current_running){
             freePage(pcb[i].kernel_stack_base);
-            freePage(pcb[i].user_stack_base);
+            free_user_pgdir(pcb[i].pgdir); // 回收用户所有页，包括栈页
             reset_pcb(&pcb[i]);
         }
     }
@@ -122,24 +122,30 @@ void reap_exited(void){
  */
 static void init_process_stack(pcb_t *task, ptr_t entry, int argc, char **argv, int *lengths){
     ptr_t kernel_top = task->kernel_stack_base+PAGE_SIZE;
-    ptr_t user_top = task->user_stack_base+PAGE_SIZE;
+    // user_stack_base保存kva，这是给内核看的；用户寄存器及argv保存va
+    ptr_t user_top = USER_STACK_ADDR;
+    ptr_t user_bottom = USER_STACK_ADDR-PAGE_SIZE;
     ptr_t user_sp = user_top;
     ptr_t arg_ptrs[EXEC_MAX_ARGC]; // 存每个参数的地址
 
-    memset((void *)task->kernel_stack_base, 0, PAGE_SIZE);
-    memset((void *)task->user_stack_base, 0, PAGE_SIZE);
+    memset((void*)task->kernel_stack_base, 0, PAGE_SIZE);
+    memset((void*)task->user_stack_base, 0, PAGE_SIZE);
 
     // 复制参数到用户栈
     for(int i=argc-1; i>=0; --i){
-        user_sp -= lengths[i]+1; // 给'\0'留空间
-        memcpy((uint8_t*)user_sp, (const uint8_t*)argv[i], lengths[i]+1);
+        user_sp -= lengths[i]+1; // '\0'
+
+        ptr_t dest = task->user_stack_base+(user_sp-user_bottom);
+        memcpy((uint8_t*)dest, (const uint8_t*)argv[i], lengths[i]+1);
+
         arg_ptrs[i] = user_sp;
     }
 
     user_sp &= ~((ptr_t)7); // 清零后三位，8字节对齐
     user_sp -= (argc+1)*sizeof(char*); // 开空间存每个参数的地址，末尾存NULL
 
-    char **user_argv = (char**)user_sp;
+    ptr_t user_argv_va = user_sp;
+    char **user_argv = (char**)(task->user_stack_base+(user_sp-user_bottom));
 
     for(int i=0; i<argc; ++i){
         user_argv[i] = (char*)arg_ptrs[i];
@@ -150,18 +156,18 @@ static void init_process_stack(pcb_t *task, ptr_t entry, int argc, char **argv, 
     user_sp &= ~((ptr_t)15); // 16字节对齐，后续参考p2的假现场构造
 
     regs_context_t *regs =
-        (regs_context_t *)(kernel_top-sizeof(regs_context_t));
+        (regs_context_t*)(kernel_top-sizeof(regs_context_t));
 
     switchto_context_t *switch_regs =
-        (switchto_context_t *)((ptr_t)regs-sizeof(switchto_context_t));
+        (switchto_context_t*)((ptr_t)regs-sizeof(switchto_context_t));
 
     regs->regs[OFFSET_REG_SP>>3] = user_sp;
     regs->regs[OFFSET_REG_TP>>3] = (reg_t)task;
     regs->regs[OFFSET_REG_A0>>3] = argc;
-    regs->regs[OFFSET_REG_A1>>3] = (reg_t)user_argv;
+    regs->regs[OFFSET_REG_A1>>3] = user_argv_va;
 
     regs->sepc = entry;
-    regs->sstatus = SR_SPIE;
+    regs->sstatus = SR_SPIE|SR_SUM;
 
     switch_regs->regs[SWITCH_TO_RA>>3] = (reg_t)ret_from_exception;
     switch_regs->regs[SWITCH_TO_SP>>3] = (reg_t)switch_regs;
@@ -187,6 +193,7 @@ void init_processes(int tasknum){
     pid0_pcb.status = TASK_RUNNING;
     pid0_pcb.cpu_mask = 1;
     pid0_pcb.cpu_id = 0;
+    pid0_pcb.pgdir = pa2kva(PGDIR_PA);
 
     list_init(&pid0_pcb.list);
     list_init(&pid0_pcb.wait_list);
@@ -196,9 +203,11 @@ void init_processes(int tasknum){
     secondary_idle_pcb.task_id = -1;
     secondary_idle_pcb.status = TASK_READY;
     // 从核idle使用独立的栈
-    secondary_idle_pcb.kernel_stack_base = allocKernelPage(1);
-    secondary_idle_pcb.kernel_sp = secondary_idle_pcb.kernel_stack_base+PAGE_SIZE;
-    secondary_idle_pcb.user_sp = INIT_KERNEL_STACK-PAGE_SIZE; // 对应head.S中CPU1启动栈顶
+    // 从核idle使用独立的栈
+    secondary_idle_pcb.kernel_stack_base = INIT_KERNEL_STACK-PAGE_SIZE;
+    secondary_idle_pcb.kernel_sp = INIT_KERNEL_STACK;
+    secondary_idle_pcb.user_sp = INIT_KERNEL_STACK; // 对应head.S中CPU1启动栈顶
+    secondary_idle_pcb.pgdir = pa2kva(PGDIR_PA);
     secondary_idle_pcb.cpu_mask = 2;
     secondary_idle_pcb.cpu_id = -1; // 从核此时未运行idle执行流
     list_init(&secondary_idle_pcb.list);
@@ -263,6 +272,7 @@ pid_t do_exec(char *name, int argc, char **argv){
     //     }
     // }
     // 同程序已有存活实例时，共享现有映像
+#if 0
     int already_exist = 0;
 
     for(int i=0; i<NUM_MAX_TASK; ++i){
@@ -271,6 +281,7 @@ pid_t do_exec(char *name, int argc, char **argv){
             break;
         }
     }
+#endif
 
     int lengths[EXEC_MAX_ARGC];
     int total_bytes = 0;
@@ -308,22 +319,26 @@ pid_t do_exec(char *name, int argc, char **argv){
 
     // ptr_t entry = load_task_img(tasks[task_id].task_name, program_count);
 
-    ptr_t entry = tasks[task_id].task_entry;
-    if(!already_exist){
-        entry = load_task_img(tasks[task_id].task_name, program_count);
-    }
-
-    if(entry == 0){
+    task->pgdir = allocPage(1);
+    if(task->pgdir == 0){
         return 0;
     }
 
-    // 加载镜像之后先分配栈，再构造假现场
-    task->kernel_stack_base = allocKernelPage(1);
-    task->user_stack_base = allocUserPage(1);
+    clear_pgdir(task->pgdir);
+    share_pgtable(task->pgdir, pa2kva(PGDIR_PA)); // 高半区设置为公共
 
-    if(task->kernel_stack_base==0 || task->user_stack_base==0){
-        task->recycle_pending = 1;
-        reap_exited();
+    ptr_t entry = load_task_img(tasks[task_id].task_name, program_count, task->pgdir);
+
+    // 加载镜像之后先分配栈，再构造假现场
+    if(entry != 0){
+        task->kernel_stack_base = allocKernelPage(1);
+        task->user_stack_base = alloc_page_helper(USER_STACK_ADDR-PAGE_SIZE, task->pgdir);
+    }
+
+    if(entry==0 || task->kernel_stack_base==0 || task->user_stack_base==0){
+        freePage(task->kernel_stack_base);
+        free_user_pgdir(task->pgdir);
+        reset_pcb(task);
         return 0;
     }
 
@@ -433,6 +448,12 @@ void do_scheduler(void)
     if(prev == next){
         return;
     }
+
+    // TODO: [p2-task1] switch_to current_running
+    unsigned asid = next->pid==0 ? 0 : ((unsigned)next->pid&0xffffU);
+
+    set_satp(SATP_MODE_SV39, asid, kva2pa(next->pgdir)>>NORMAL_PAGE_SHIFT); // 切换之前设置新的satp并刷TLB
+    local_flush_tlb_all();
 
     // TODO: [p2-task1] switch_to current_running
     switch_to(prev, next);
