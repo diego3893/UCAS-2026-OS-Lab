@@ -183,8 +183,9 @@ int main(void){
         current_running->cursor_x = pid0_pcb.cursor_x;
         current_running->cursor_y = pid0_pcb.cursor_y;
         printk("> [SMP] CPU1 entered main.\n");
-        printk("> [INIT] CPU #%u has entered kernel with VM!\n",
-               (unsigned int)get_current_cpu_id());
+        printk("> [INIT] CPU #%u has entered kernel with VM!\n", (unsigned int)get_current_cpu_id());
+        pid0_pcb.cursor_x = current_running->cursor_x;
+        pid0_pcb.cursor_y = current_running->cursor_y;
 
         unlock_kernel();
 

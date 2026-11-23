@@ -184,7 +184,12 @@ static void init_process_stack(pcb_t *task, ptr_t entry, int argc, char **argv, 
 void init_processes(int tasknum){
     current_running = &pid0_pcb;
 
+    // 保留之前打印调试信息的光标，避免相互覆盖
+    int boot_cursor_x = pid0_pcb.cursor_x;
+    int boot_cursor_y = pid0_pcb.cursor_y;
     memset(&pid0_pcb, 0, sizeof(pcb_t));
+    pid0_pcb.cursor_x = boot_cursor_x;
+    pid0_pcb.cursor_y = boot_cursor_y;
 
     pid0_pcb.pid = 0;
     pid0_pcb.kernel_sp = pid0_stack;
