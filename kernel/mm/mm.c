@@ -178,7 +178,7 @@ uintptr_t alloc_page_helper(uintptr_t va, uintptr_t pgdir){
     // TODO [P4-task1] alloc_page_helper:
     va = ROUNDDOWN(va, PAGE_SIZE);
 
-    if(va<PAGE_SIZE || va>=USER_VA_LIMIT){
+    if(va>=USER_VA_LIMIT){
         return 0;
     }
 
