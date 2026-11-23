@@ -199,5 +199,6 @@ image: $(ELF_CREATEIMAGE) $(ELF_BOOT) $(ELF_MAIN) $(ELF_USER)
 	cp $(KERNEL_IMAGE) $(ELF_IMAGE)
 	dd if=$(USER_IMAGE) of=$(ELF_IMAGE) bs=512 \
 		seek=$(USER_IMAGE_START_SECTOR) conv=notrunc
+	dd if=/dev/zero of=$(ELF_IMAGE) oflag=append conv=notrunc bs=64MB count=1
 
 .PHONY: image
