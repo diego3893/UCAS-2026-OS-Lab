@@ -519,6 +519,7 @@ long do_thread_create(uintptr_t trampoline, uintptr_t start_routine, uintptr_t a
     space->refs++;
     space->live++;
     flush_tlb_all();
+    task->status = TASK_READY;
     list_add_tail(&task->list, &ready_queue);
 
     return task->pid;
