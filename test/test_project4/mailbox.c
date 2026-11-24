@@ -27,17 +27,20 @@ static inline int ring_buffer_empty()
 }
 void ring_buffer_append(char ch)
 {
-    while (ring_buffer_full());
-
-    ring_buffer[ring_buffer_tail] = ch;
-    ring_buffer_tail = (ring_buffer_tail + 1) % BUFFER_LENGTH;
+    int tail = __atomic_load_n(&ring_buffer_tail, __ATOMIC_RELAXED);
+    int next = (tail+1)%BUFFER_LENGTH;
+    while(next == __atomic_load_n(&ring_buffer_head, __ATOMIC_ACQUIRE)){
+    }
+    ring_buffer[tail] = ch;
+    __atomic_store_n(&ring_buffer_tail, next, __ATOMIC_RELEASE);
 }
 char ring_buffer_pop()
 {
-    while (ring_buffer_empty());
-
-    char ret = ring_buffer[ring_buffer_head];
-    ring_buffer_head = (ring_buffer_head + 1) % BUFFER_LENGTH;
+    int head = __atomic_load_n(&ring_buffer_head, __ATOMIC_RELAXED);
+    while(head == __atomic_load_n(&ring_buffer_tail, __ATOMIC_ACQUIRE)){
+    }
+    char ret = ring_buffer[head];
+    __atomic_store_n(&ring_buffer_head, (head+1)%BUFFER_LENGTH, __ATOMIC_RELEASE);
     return ret;
 }
 void get_str_from_ring_buffer(char* buf, int len)

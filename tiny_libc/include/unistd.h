@@ -63,4 +63,8 @@ void* sys_shmpageget(int key);
 void sys_shmpagedt(void *addr);
 /************************************************************/
 
+pid_t sys_thread_create(uintptr_t trampoline, uintptr_t start_routine, uintptr_t arg);
+int sys_thread_join(pthread_t thread);
+void sys_thread_exit(void);
+
 #endif

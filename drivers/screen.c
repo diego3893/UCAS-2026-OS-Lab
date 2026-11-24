@@ -38,8 +38,8 @@ static void vt100_hidden_cursor()
 /* write a char */
 void screen_write_ch(char ch){
     // PID1为Shell，使用下半屏；其他进程使用上半屏。
-    int first_row = current_running->pid==1 ? 20 : 0;
-    int last_row = current_running->pid==1 ? SCREEN_HEIGHT-1 : 19;
+    int first_row = current_running->tgid==1 ? 20 : 0;
+    int last_row = current_running->tgid==1 ? SCREEN_HEIGHT-1 : 19;
 
     if(current_running->cursor_y < first_row){
         current_running->cursor_y = first_row;

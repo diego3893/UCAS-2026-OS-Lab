@@ -4,6 +4,7 @@
 #include <os/kernel.h>
 #include <os/sched.h>
 #include <printk.h>
+#include <os/smp.h>
 
 typedef struct free_page{
     struct free_page *next;
@@ -281,7 +282,7 @@ static swap_space_t *find_swap_space(uintptr_t pgdir, int create){
         if(swap_spaces[i].pgdir == 0){
             memset(&swap_spaces[i], 0, sizeof(swap_spaces[i]));
             swap_spaces[i].pgdir = pgdir;
-            swap_spaces[i].pid = current_running->pid;
+            swap_spaces[i].pid = current_running->tgid;
             return &swap_spaces[i];
         }
     }
@@ -335,18 +336,18 @@ static uintptr_t clock_evict(swap_space_t *space){
         assert(pa2kva(get_pa(*entry))==page->frame);
         if(*entry&_PAGE_ACCESSED){ // clock: A=1，再给一次机会
             *entry &= ~(uint64_t)_PAGE_ACCESSED;
-            local_flush_tlb_all();
+            flush_tlb_all();
             continue;
         }
 
         PTE old_entry = *entry; // 暂存，便于恢复
         *entry = make_swap_pte(slot); // 撤销用户映射
-        local_flush_tlb_all();
+        flush_tlb_all();
         unsigned pa = (unsigned)kva2pa(page->frame);
         if(bios_sd_write(pa, SWAP_SECTORS_PER_PAGE, swap_sector(slot)) < 0){
             // 写盘失败，原数据仍在物理页中，恢复原映射
             *entry = old_entry;
-            local_flush_tlb_all();
+            flush_tlb_all();
             return 0;
         }
 
@@ -448,7 +449,7 @@ int swap_handle_fault(uintptr_t pgdir, uintptr_t va, uint64_t access){
     set_pfn(entry, kva2pa(frame)>>NORMAL_PAGE_SHIFT);
     set_attribute(entry, _PAGE_PRESENT|_PAGE_USER|_PAGE_READ|
                         _PAGE_WRITE|_PAGE_ACCESSED|_PAGE_DIRTY);
-    local_flush_tlb_all();
+    flush_tlb_all();
     return 0;
 }
 

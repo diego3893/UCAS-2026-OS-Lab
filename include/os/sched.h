@@ -63,6 +63,16 @@ typedef enum {
     TASK_EXITED,
 } task_status_t;
 
+// 线程共享的地址空间
+typedef struct address_space{
+    uintptr_t pgdir; // 根页表
+    pid_t tgid; // 进程编号
+    int refs; // 引用此地址空间的PCB数，e.g.尚未join的已结束线程
+    int live; // 尚未退出的线程数
+    int dying; // 整个进程正在退出
+    list_head waiters; // waitpid等待队列
+}address_space_t;
+
 /* Process Control Block */
 typedef struct pcb
 {
@@ -108,7 +118,19 @@ typedef struct pcb
     int cpu_id; // 当前运行的核号，没有运行时为-1
 
     uintptr_t pgdir; // 根页表的内核虚拟地址
+    pid_t tgid; // 所属进程编号；原pid作为唯一线程编号
+    address_space_t *space; // 地址空间
+    uintptr_t user_stack_top; // 线程用户栈顶
+
+    int is_thread; // 由pthread_create创建则为1
+    int joined; // 已被join
+    pid_t joiner; // 正在等待本线程的线程编号，0表示没有
+    pid_t join_target; // 本线程正在join的目标，0表示没有
 } pcb_t;
+
+long do_thread_create(uintptr_t trampoline, uintptr_t start_routine, uintptr_t arg);
+int do_thread_join(pid_t tid);
+void do_thread_exit(void);
 
 /* ready queue to run */
 extern list_head ready_queue;

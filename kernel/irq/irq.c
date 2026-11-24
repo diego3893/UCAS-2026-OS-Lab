@@ -113,7 +113,7 @@ void handle_other(regs_context_t *regs, uint64_t stval, uint64_t scause)
 }
 
 static void terminate_faulting_process(regs_context_t *regs, uint64_t stval, uint64_t scause, const char *reason){
-    printk("> [PAGE FAULT] pid=%d cause=%lu va=0x%lx sepc=0x%lx\n", current_running->pid, scause, stval, regs->sepc);
+    printk("> [PAGE FAULT] pid=%d cause=%lu va=0x%lx sepc=0x%lx\n", current_running->tgid, scause, stval, regs->sepc);
     printk("> [PAGE FAULT] %s\n", reason);
     // 退出发生错误缺页的进程
     do_exit();
@@ -166,11 +166,12 @@ void handle_page_fault(regs_context_t *regs, uint64_t stval, uint64_t scause){
         // 因A/D未设置而触发缺页，应补上标志位
         if((value&needed) != needed){
             set_attribute(entry, needed);
-            local_flush_tlb_all();
+            flush_tlb_all();
             return;
         }
         // 映射、权限、A/D均已满足仍然缺页，视为错误
-        terminate_faulting_process(regs, stval, scause, "unexpected fault on mapped page");
+        // task4: 其他线程可能修复这个问题，因此刷新tlb重试
+        flush_tlb_all();
         return;
     }
 

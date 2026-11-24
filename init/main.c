@@ -141,6 +141,9 @@ static void init_syscall(void)
     syscall[SYSCALL_MBOX_SEND] = (long (*)())do_mbox_send;
     syscall[SYSCALL_MBOX_RECV] = (long (*)())do_mbox_recv;
     syscall[SYSCALL_TASKSET] = (long (*)())do_taskset;
+    syscall[SYSCALL_THREAD_CREATE] = (long (*)())do_thread_create;
+    syscall[SYSCALL_THREAD_JOIN] = (long (*)())do_thread_join;
+    syscall[SYSCALL_THREAD_EXIT] = (long (*)())do_thread_exit;
 }
 
 static long do_readch(void){

@@ -90,24 +90,75 @@ static pcb_t *find_process(pid_t pid){
         return NULL;
     }
     for(int i=0; i<NUM_MAX_TASK; ++i){
-        if(pcb[i].status!=TASK_EXITED && pcb[i].pid==pid){
+        if(pcb[i].pid == pid){
             return &pcb[i];
         }
     }
     return NULL;
 }
 
+// 根据进程号找仍有活动线程的线程组
+static address_space_t *find_group(pid_t tgid){
+    if(tgid <= 0){
+        return NULL;
+    }
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        address_space_t *space = pcb[i].space;
+        if(space!=NULL && space->tgid==tgid && space->live>0){
+            return space;
+        }
+    }
+
+    return NULL;
+}
+
 /**
- * @brief 回收进程pcb
+ * @brief 回收pcb
  * 
  */
 void reap_exited(void){
     for(int i=0; i<NUM_MAX_TASK; ++i){
-        if(pcb[i].status==TASK_EXITED && pcb[i].recycle_pending && &pcb[i]!=current_running){
-            freePage(pcb[i].kernel_stack_base);
-            free_user_pgdir(pcb[i].pgdir); // 回收用户所有页，包括栈页
-            reset_pcb(&pcb[i]);
+        pcb_t *task = &pcb[i];
+        if(task->pid==0 || task->status!=TASK_EXITED || task==current_running){
+            continue;
         }
+
+        address_space_t *space = task->space;
+        assert(space!=NULL);
+
+        if(task->recycle_pending){
+            freePage(task->kernel_stack_base);
+            task->kernel_stack_base = 0;
+
+            if(task->is_thread && task->user_stack_base!=0){
+                uintptr_t va = task->user_stack_top-PAGE_SIZE;
+                PTE *entry = walk_user_pte(task->pgdir, va, 0);
+                assert(entry!=NULL && (*entry&_PAGE_PRESENT));
+                // 先撤销映射并同步两核，再将页框放回空闲链表
+                *entry = 0;
+                flush_tlb_all();
+                freePage(task->user_stack_base);
+                task->user_stack_base = 0;
+            }
+            // 主线程栈随整个地址空间一起回收
+            task->recycle_pending = 0;
+        }
+
+        // 保留结束记录，允许目标先退出、调用者后join
+        if(task->is_thread && !task->joined && !space->dying){
+            continue;
+        }
+
+        assert(space->refs>0);
+        space->refs--; // 回收一个pcb，引用减1
+
+        if(space->refs == 0){
+            assert(space->live==0);
+            flush_tlb_all();
+            free_user_pgdir(space->pgdir); // 回收用户所有页，包括栈页
+            freePage((ptr_t)space);
+        }
+        reset_pcb(task);
     }
 }
 
@@ -123,8 +174,8 @@ void reap_exited(void){
 static void init_process_stack(pcb_t *task, ptr_t entry, int argc, char **argv, int *lengths){
     ptr_t kernel_top = task->kernel_stack_base+PAGE_SIZE;
     // user_stack_base保存kva，这是给内核看的；用户寄存器及argv保存va
-    ptr_t user_top = USER_STACK_ADDR;
-    ptr_t user_bottom = USER_STACK_ADDR-PAGE_SIZE;
+    ptr_t user_top = task->user_stack_top;
+    ptr_t user_bottom = user_top-PAGE_SIZE;
     ptr_t user_sp = user_top;
     ptr_t arg_ptrs[EXEC_MAX_ARGC]; // 存每个参数的地址
 
@@ -308,7 +359,7 @@ pid_t do_exec(char *name, int argc, char **argv){
     // 找一个可以被复用的pcb作为当前进程的pcb
     pcb_t *task = NULL;
     for(int i=0; i<NUM_MAX_TASK; ++i){
-        if(pcb[i].status==TASK_EXITED && !pcb[i].recycle_pending){
+        if(pcb[i].pid==0 && pcb[i].status==TASK_EXITED && !pcb[i].recycle_pending){
             task = &pcb[i];
             break;
         }
@@ -346,16 +397,167 @@ pid_t do_exec(char *name, int argc, char **argv){
         reset_pcb(task);
         return 0;
     }
+    // 创建地址空间
+    address_space_t *space = (address_space_t*)allocPage(1);
+    if(space == NULL){
+        freePage(task->kernel_stack_base);
+        free_user_pgdir(task->pgdir);
+        reset_pcb(task);
+        return 0;
+    }
+    memset(space, 0, PAGE_SIZE);
+    list_init(&space->waiters);
+    task->space = space;
+    task->user_stack_top = USER_STACK_ADDR;
 
     init_process_stack(task, entry, argc, argv, lengths);
 
     task->task_id = task_id;
     task->pid = process_id++;
+    task->tgid = task->pid;
     task->status = TASK_READY;
+    space->pgdir = task->pgdir;
+    space->tgid = task->tgid;
+    space->refs = 1;
+    space->live = 1;
 
     list_add_tail(&task->list, &ready_queue);
 
+    return task->tgid;
+}
+
+// 检查addr是否可以作为线程入口
+static int user_code_mapped(uintptr_t pgdir, uintptr_t addr){
+    if((addr&1UL) || addr>=USER_VA_LIMIT-1){ // 指令地址按照riscv需要2字节对齐
+        return 0;
+    }
+    uint64_t required = _PAGE_PRESENT|_PAGE_USER|_PAGE_EXEC;
+    PTE *entry = walk_user_pte(pgdir, addr, 0);
+    if(entry==NULL || (*entry&required)!=required){
+        return 0;
+    }
+    return 1;
+}
+
+/**
+ * @brief 创建线程
+ * 
+ * @param trampoline 用户态包装函数
+ * @param start_routine 指定的线程函数
+ * @param arg 线程函数参数
+ * @return long 线程id
+ */
+long do_thread_create(uintptr_t trampoline, uintptr_t start_routine, uintptr_t arg){
+    reap_exited();
+    pcb_t *owner = current_running;
+    address_space_t *space = owner->space; // 上级线程地址空间
+
+    if(space==NULL || space->dying || process_id<=0 || process_id>=INT32_MAX){
+        return 0;
+    }
+    if(!user_code_mapped(owner->pgdir, trampoline) || !user_code_mapped(owner->pgdir, start_routine)){
+        return 0;
+    }
+
+    pcb_t *task = NULL;
+    uintptr_t stack_top = 0;
+
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        if(pcb[i].pid!=0 || pcb[i].status!=TASK_EXITED || pcb[i].recycle_pending){
+            continue;
+        }
+
+        // 每个PCB槽位对应不同的线程栈地址，与主线程栈错开；偏移两页，留一页空白
+        uintptr_t candidate = USER_STACK_ADDR-(uintptr_t)(i+1)*2*PAGE_SIZE;
+        PTE *entry = walk_user_pte(owner->pgdir, candidate-PAGE_SIZE, 0);
+        if(entry!=NULL && *entry!=0){
+            continue;
+        }
+        task = &pcb[i];
+        stack_top = candidate;
+        break;
+    }
+
+    if(task == NULL){
+        return 0;
+    }
+
+    reset_pcb(task); // 开始继承
+    task->pgdir = owner->pgdir;
+    task->space = space;
+    task->tgid = owner->tgid;
+    task->is_thread = 1;
+    task->task_id = owner->task_id;
+    task->cpu_mask = owner->cpu_mask;
+    task->cursor_x = owner->cursor_x;
+    task->cursor_y = owner->cursor_y;
+    task->user_stack_top = stack_top;
+    // 分配自己的用户栈和内核栈
+    task->kernel_stack_base = allocKernelPage(1);
+    if(task->kernel_stack_base == 0){
+        reset_pcb(task);
+        return 0;
+    }
+    task->user_stack_base = alloc_page_helper(stack_top-PAGE_SIZE, task->pgdir);
+    if(task->user_stack_base == 0){
+        freePage(task->kernel_stack_base);
+        reset_pcb(task);
+        return 0;
+    }
+
+    PTE *stack_entry = walk_user_pte(task->pgdir, stack_top-PAGE_SIZE, 0);
+    assert(stack_entry!=NULL);
+    *stack_entry &= ~(PTE)_PAGE_EXEC;
+
+    // argc=0复用现有假现场初始化，再手动设置入口和参数
+    init_process_stack(task, trampoline, 0, NULL, NULL);
+    regs_context_t *regs = (regs_context_t*)(task->kernel_stack_base+PAGE_SIZE-sizeof(regs_context_t));
+    regs->regs[OFFSET_REG_A0>>3] = start_routine;
+    regs->regs[OFFSET_REG_A1>>3] = arg;
+
+    task->pid = process_id++;
+    space->refs++;
+    space->live++;
+    flush_tlb_all();
+    list_add_tail(&task->list, &ready_queue);
+
     return task->pid;
+}
+
+int do_thread_join(pid_t tid){
+    pcb_t *self = current_running;
+    pcb_t *target = find_process(tid);
+    if(target==NULL || target==self || !target->is_thread || target->space!=self->space || target->joined){
+        return -1;
+    }
+    // 线程的joiner应该唯一
+    if(target->joiner!=0 && target->joiner!=self->pid){
+        return -1;
+    }
+
+    // 沿join关系检查，避免互相join
+    pcb_t *cursor = target;
+    for(int i=0; cursor!=NULL && i<NUM_MAX_TASK; ++i){
+        if(cursor == self){
+            return -1;
+        }
+        if(cursor->join_target == 0){
+            break;
+        }
+        cursor = find_process(cursor->join_target);
+    }
+
+    target->joiner = self->pid;
+    self->join_target = tid;
+
+    while(target->status != TASK_EXITED){
+        do_block(&self->list, &target->wait_list);
+    }
+
+    self->join_target = 0;
+    target->joined = 1;
+
+    return 0;
 }
 
 /**
@@ -382,19 +584,26 @@ pid_t do_taskset(int mask, pid_t pid, char *name){
         }
     }
 
-    pcb_t *task = find_process(pid);
-    if(task == NULL){
+    address_space_t *space = find_group(pid);
+    if(space == NULL){
         return 0;
     }
-    task->cpu_mask = mask;
 
-    // 正在运行，但新掩码和当前核冲突
-    if(task->status==TASK_RUNNING && !(mask&(1U<<task->cpu_id))){
-        task->ticks_left = 1;
-        if(task == current_running){ // 本核进程，立即调度
-            do_scheduler();
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        pcb_t *task = &pcb[i];
+        if(task->space!=space || task->status==TASK_EXITED){
+            continue;
         }
-        // 另一核的进程在下一次定时器中断时重新调度
+        task->cpu_mask = mask;
+
+        // 正在运行，但新掩码和当前核冲突
+        if(task->status==TASK_RUNNING && !(mask&(1U<<task->cpu_id))){
+            task->ticks_left = 1;
+        }
+    }
+
+    if(current_running->space==space && !(mask&(1U<<current_running->cpu_id))){ // 本核进程，立即调度
+        do_scheduler();
     }
 
     return pid;
@@ -455,7 +664,7 @@ void do_scheduler(void)
     }
 
     // TODO: [p2-task1] switch_to current_running
-    unsigned asid = next->pid==0 ? 0 : ((unsigned)next->pid&0xffffU);
+    unsigned asid = next->tgid==0 ? 0 : ((unsigned)next->tgid&0xffffU);
 
     set_satp(SATP_MODE_SV39, asid, kva2pa(next->pgdir)>>NORMAL_PAGE_SHIFT); // 切换之前设置新的satp并刷TLB
     local_flush_tlb_all();
@@ -570,11 +779,26 @@ long do_set_sche_workload(int workload){
  * @param task 进程pcb
  */
 static void terminate_process(pcb_t *task){
+    if(task->status == TASK_EXITED){
+        return;
+    }
+
     do_barrier_cancel_wait(&task->list);
     list_del(&task->list);
 
     task->status = TASK_EXITED;
     task->workload_valid = 0;
+
+    // 等待者被结束时，取消它对join占用
+    if(task->join_target != 0){
+        pcb_t *target = find_process(task->join_target);
+
+        if(target!=NULL && target->joiner==task->pid){
+            target->joiner = 0;
+        }
+
+        task->join_target = 0;
+    }
 
     do_mutex_release_all(task->pid);
     do_mbox_release_all(task->pid);
@@ -583,7 +807,56 @@ static void terminate_process(pcb_t *task){
         do_unblock(task->wait_list.next);
     }
 
+    address_space_t *space = task->space;
+    assert(space!=NULL && space->live>0);
+    space->live--;
+
+    if(space->live == 0){
+        space->dying = 1;
+
+        while(!list_empty(&space->waiters)){
+            do_unblock(space->waiters.next);
+        }
+    }
+
     task->recycle_pending = 1;
+}
+
+/**
+ * @brief 结束对应的整个线程组
+ * 
+ * @param space 进程的地址空间
+ */
+static void terminate_group(address_space_t *space){
+    space->dying = 1;
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        pcb_t *task = &pcb[i];
+        if(task->space!=space || task->status==TASK_EXITED){
+            continue;
+        }
+        if(task->status == TASK_RUNNING){
+            task->kill_pending = 1; // 正在运行且不在本核，标记退出请求
+        }else{
+            terminate_process(task);
+        }
+    }
+}
+
+/**
+ * @brief 结束向前线程
+ * 
+ */
+void do_thread_exit(void){
+    if(current_running->pid == 0){
+        return;
+    }
+
+    terminate_process(current_running);
+    do_scheduler();
+
+    assert(0);
+    while(1){
+    }
 }
 
 /**
@@ -594,6 +867,7 @@ void do_exit(void){
     if(current_running->pid == 0){
         return;
     }
+    terminate_group(current_running->space);
     terminate_process(current_running);
     do_scheduler();
     assert(0);
@@ -608,20 +882,16 @@ void do_exit(void){
  * @return int 1成功，0失败
  */
 int do_kill(pid_t pid){
-    pcb_t *task = find_process(pid);
+    address_space_t *space = find_group(pid);
 
-    if(task == NULL){
+    if(space == NULL){
         return 0;
     }
-    if(task == current_running){
+    if(space == current_running->space){
         do_exit();
         return 1;
     }
-    if(task->status == TASK_RUNNING){ // 正在运行且不在本核，标记退出请求
-        task->kill_pending = 1;
-        return 1;
-    }
-    terminate_process(task);
+    terminate_group(space);
     return 1;
 }
 
@@ -632,16 +902,16 @@ int do_kill(pid_t pid){
  * @return int 原本的pid
  */
 int do_waitpid(pid_t pid){
-    pcb_t *target = find_process(pid);
-    if(target==NULL || target==current_running){
+    address_space_t *space = find_group(pid);
+    if(space==NULL || space==current_running->space){
         return 0;
     }
-    do_block(&current_running->list, &target->wait_list);
+    do_block(&current_running->list, &space->waiters);
     return pid;
 }
 
 pid_t do_getpid(void){
-    return current_running->pid;
+    return current_running->tgid;
 }
 
 /**
@@ -656,17 +926,21 @@ void do_process_show(void){
         "EXITED"
     };
 
-    printk("PID  STATUS  MASK  CPU  NAME\n");
-    printk("0  %s  0x%x  %d  idle0\n", status_names[pid0_pcb.status], pid0_pcb.cpu_mask, pid0_pcb.cpu_id);
-    printk("0  %s  0x%x  %d  idle1\n", 
-        status_names[secondary_idle_pcb.status], secondary_idle_pcb.cpu_mask, secondary_idle_pcb.cpu_id);
+    printk("PID  TID  STATUS  MASK  CPU  NAME\n");
+    printk("0  0  %s  0x%x  %d  idle0\n",
+        status_names[pid0_pcb.status], pid0_pcb.cpu_mask, pid0_pcb.cpu_id);
+    printk("0  0  %s  0x%x  %d  idle1\n",
+        status_names[secondary_idle_pcb.status],
+        secondary_idle_pcb.cpu_mask, secondary_idle_pcb.cpu_id);
 
     for(int i=0; i<NUM_MAX_TASK; ++i){
         if(pcb[i].status == TASK_EXITED){
             continue;
         }
-        printk("%d  %s  0x%x  %d  %s\n", 
-            pcb[i].pid, status_names[pcb[i].status], pcb[i].cpu_mask, pcb[i].cpu_id, 
+
+        printk("%d  %d  %s  0x%x  %d  %s\n",
+            pcb[i].tgid, pcb[i].pid, status_names[pcb[i].status],
+            pcb[i].cpu_mask, pcb[i].cpu_id,
             tasks[pcb[i].task_id].task_name);
     }
 }

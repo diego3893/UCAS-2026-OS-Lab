@@ -240,3 +240,16 @@ void sys_shmpagedt(void *addr)
     /* TODO: [p4-task4] call invoke_syscall to implement sys_shmpagedt */
 }
 /************************************************************/
+
+pid_t sys_thread_create(uintptr_t trampoline, uintptr_t start_routine, uintptr_t arg){
+    return (pid_t)invoke_syscall(SYSCALL_THREAD_CREATE, 
+        (long)trampoline, (long)start_routine, (long)arg, IGNORE, IGNORE);
+}
+
+int sys_thread_join(pthread_t thread){
+    return (int)invoke_syscall(SYSCALL_THREAD_JOIN, (long)thread, IGNORE, IGNORE, IGNORE, IGNORE);
+}
+
+void sys_thread_exit(void){
+    invoke_syscall(SYSCALL_THREAD_EXIT, IGNORE, IGNORE, IGNORE, IGNORE, IGNORE);
+}
