@@ -77,7 +77,7 @@ void free_user_pgdir(uintptr_t pgdir);
 #define SWAP_SLOT_COUNT 1024
 #define SWAP_SECTORS_PER_PAGE (PAGE_SIZE/512)
 #define _PAGE_SWAPPED _PAGE_SOFT // V=0时，使用软件位表示该页已经换出
-#define SWAP_DEBUG 1 // 置1时，在回收地址空间时输出换入、换出次数
+#define SWAP_DEBUG 0 // 置1时，在回收地址空间时输出换入、换出次数
 
 int init_swap(uint32_t first_sector);
 int swap_handle_fault(uintptr_t pgdir, uintptr_t va, uint64_t access);
