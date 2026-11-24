@@ -10,6 +10,32 @@ typedef struct free_page{
     struct free_page *next;
 }free_page_t;
 
+typedef struct shm_page{
+    int key;
+    uintptr_t frame; // 共享物理页kva
+    int refs; // 映射到该物理页的用户PTE数量
+}shm_page_t;
+
+static shm_page_t shm_pages[SHM_PAGE_COUNT];
+
+// 释放一个共享内存引用
+static void shm_put_page(uintptr_t frame){
+    for(int i=0; i<SHM_PAGE_COUNT; ++i){
+        shm_page_t *page = &shm_pages[i];
+        if(page->frame != frame){
+            continue;
+        }
+        assert(page->refs>0);
+        page->refs--;
+        if(page->refs == 0){
+            freePage(page->frame);
+            memset(page, 0, sizeof(*page));
+        }
+        return;
+    }
+    assert(0);
+}
+
 static ptr_t kernMemCurr = FREEMEM_KERNEL;
 static free_page_t *free_pages = NULL;
 
@@ -142,7 +168,13 @@ static void free_user_table(uintptr_t table_kva, int level){
 
         if(entry&(_PAGE_READ|_PAGE_WRITE|_PAGE_EXEC)){
             assert(level==0 && (entry&_PAGE_USER)); // 释放末级用户页
-            freePage(pa2kva(get_pa(entry)));
+            uintptr_t frame = pa2kva(get_pa(entry));
+            if(entry&_PAGE_SHARED){
+                // 共享页只减少当前映射的引用
+                shm_put_page(frame);
+            }else{
+                freePage(frame);
+            }
         }else{
             assert(level>0);
             free_user_table(pa2kva(get_pa(entry)), level-1); // 递归释放次级页表
@@ -474,12 +506,96 @@ void swap_forget_pgdir(uintptr_t pgdir){
     }
 }
 
-uintptr_t shm_page_get(int key)
-{
+uintptr_t shm_page_get(int key){
     // TODO [P4-task4] shm_page_get:
+    if(current_running->space==NULL || current_running->space->dying){
+        return 0;
+    }
+
+    uintptr_t pgdir = current_running->pgdir;
+    int slot = -1;
+    int free_slot = -1;
+
+    // 查找相同key；同时记录一个空槽
+    for(int i=0; i<SHM_PAGE_COUNT; ++i){
+        if(shm_pages[i].frame == 0){
+            if(free_slot < 0){
+                free_slot = i;
+            }
+        }else if(shm_pages[i].key == key){
+            slot = i;
+            break;
+        }
+    }
+    if(slot < 0){
+        if(free_slot < 0){
+            return 0;
+        }
+        slot = free_slot;
+    }
+
+    uintptr_t va = 0;
+    PTE *entry = NULL;
+
+    // 每次动态查找空闲VA，不能覆盖普通页或已经换出的页面。
+    for(uintptr_t candidate=SHM_VA_BASE; candidate<SHM_VA_END; candidate+=PAGE_SIZE){
+        PTE *existing = walk_user_pte(pgdir, candidate, 0);
+
+        if(existing!=NULL && *existing!=0){ // PTE被使用
+            continue;
+        }
+
+        entry = walk_user_pte(pgdir, candidate, 1);
+        if(entry == NULL){
+            return 0;
+        }
+
+        va = candidate;
+        break;
+    }
+
+    if(entry == NULL){
+        return 0;
+    }
+
+    // 新key才分配并清零物理页；已有key直接复用
+    if(shm_pages[slot].frame == 0){
+        uintptr_t frame = allocPage(1);
+
+        if(frame == 0){
+            return 0;
+        }
+
+        memset((void*)frame, 0, PAGE_SIZE);
+        shm_pages[slot].key = key;
+        shm_pages[slot].frame = frame;
+        shm_pages[slot].refs = 0;
+    }
+
+    // 共享数据页 RW=1, X=0
+    PTE value = 0;
+    set_pfn(&value, kva2pa(shm_pages[slot].frame)>>NORMAL_PAGE_SHIFT);
+    set_attribute(&value, _PAGE_PRESENT|_PAGE_USER|_PAGE_READ|_PAGE_WRITE|
+                          _PAGE_ACCESSED|_PAGE_DIRTY|_PAGE_SHARED);
+    *entry = value;
+    shm_pages[slot].refs++;
+    flush_tlb_all();
+    return va;
 }
 
-void shm_page_dt(uintptr_t addr)
-{
+void shm_page_dt(uintptr_t addr){
     // TODO [P4-task4] shm_page_dt:
+    if(current_running->space==NULL || addr>=USER_VA_LIMIT || (addr&(PAGE_SIZE-1))){
+        return;
+    }
+    uintptr_t pgdir = current_running->pgdir;
+    PTE *entry = walk_user_pte(pgdir, addr, 0);
+    uint64_t required = _PAGE_PRESENT|_PAGE_USER|_PAGE_SHARED;
+    if(entry==NULL || (*entry&required)!=required){
+        return;
+    }
+    uintptr_t frame = pa2kva(get_pa(*entry));
+    *entry = 0;
+    flush_tlb_all();
+    shm_put_page(frame);
 }

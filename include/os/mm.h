@@ -83,6 +83,11 @@ int init_swap(uint32_t first_sector);
 int swap_handle_fault(uintptr_t pgdir, uintptr_t va, uint64_t access);
 void swap_forget_pgdir(uintptr_t pgdir);
 
+
+#define SHM_PAGE_COUNT 32
+#define SHM_VA_BASE 0x10000000UL
+#define SHM_VA_END 0x10100000UL
+#define _PAGE_SHARED (1UL<<9)
 // TODO [P4-task4]: shm_page_get/dt */
 uintptr_t shm_page_get(int key);
 void shm_page_dt(uintptr_t addr);

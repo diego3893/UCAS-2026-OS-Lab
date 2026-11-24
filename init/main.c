@@ -144,6 +144,8 @@ static void init_syscall(void)
     syscall[SYSCALL_THREAD_CREATE] = (long (*)())do_thread_create;
     syscall[SYSCALL_THREAD_JOIN] = (long (*)())do_thread_join;
     syscall[SYSCALL_THREAD_EXIT] = (long (*)())do_thread_exit;
+    syscall[SYSCALL_SHM_GET] = (long (*)())shm_page_get;
+    syscall[SYSCALL_SHM_DT] = (long (*)())shm_page_dt;
 }
 
 static long do_readch(void){

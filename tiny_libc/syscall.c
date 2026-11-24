@@ -230,14 +230,14 @@ pid_t sys_taskset(int mask, pid_t pid, char *name){
     return invoke_syscall(SYSCALL_TASKSET, (long)mask, (long)pid, (long)name, IGNORE, IGNORE);
 }
 
-void* sys_shmpageget(int key)
-{
+void* sys_shmpageget(int key){
     /* TODO: [p4-task4] call invoke_syscall to implement sys_shmpageget */
+    return (void*)invoke_syscall(SYSCALL_SHM_GET, (long)key, IGNORE, IGNORE, IGNORE, IGNORE);
 }
 
-void sys_shmpagedt(void *addr)
-{
+void sys_shmpagedt(void *addr){
     /* TODO: [p4-task4] call invoke_syscall to implement sys_shmpagedt */
+    invoke_syscall(SYSCALL_SHM_DT, (long)addr, IGNORE, IGNORE, IGNORE, IGNORE);
 }
 /************************************************************/
 
