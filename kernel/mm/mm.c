@@ -1,6 +1,9 @@
 #include <os/mm.h>
 #include <assert.h>
 #include <os/string.h>
+#include <os/kernel.h>
+#include <os/sched.h>
+#include <printk.h>
 
 typedef struct free_page{
     struct free_page *next;
@@ -155,6 +158,7 @@ void free_user_pgdir(uintptr_t pgdir){
         return;
     }
 
+    swap_forget_pgdir(pgdir);
     free_user_table(pgdir, 2);
 }
 
@@ -210,6 +214,263 @@ uintptr_t alloc_page_helper(uintptr_t va, uintptr_t pgdir){
                         _PAGE_EXEC|_PAGE_USER|_PAGE_ACCESSED|_PAGE_DIRTY); // task1 AD先置1
 
     return page;
+}
+
+// P4-task3: Clock page replacement
+
+// 每个记录对应一个用户虚拟页，同时独占一个swap槽位
+typedef struct swap_page{
+    uintptr_t pgdir;
+    uintptr_t va;
+    uintptr_t frame; // frame!=0表示驻留，frame==0表示数据保存在对应swap槽中
+} swap_page_t;
+
+// 每个地址空间维护独立的驻留数量和Clock扫描位置
+typedef struct swap_space{
+    uintptr_t pgdir;
+    pid_t pid;
+    int resident; // 内存驻留数
+    int hand; // clock扫描指针
+    uint64_t swap_outs; 
+    uint64_t swap_ins;
+} swap_space_t;
+
+static swap_page_t swap_pages[SWAP_SLOT_COUNT];
+static swap_space_t swap_spaces[NUM_MAX_TASK];
+
+static uint32_t swap_first_sector;
+static int swap_ready;
+
+static PTE make_swap_pte(int slot){
+    return ((PTE)(slot+1)<<_PAGE_PFN_SHIFT)|_PAGE_SWAPPED; // 将PPN直接填充为swap slot+1
+}
+
+static unsigned swap_sector(int slot){
+    return swap_first_sector+(unsigned)slot*SWAP_SECTORS_PER_PAGE;
+}
+
+int init_swap(uint32_t first_sector){
+    uint64_t end = (uint64_t)first_sector+(uint64_t)SWAP_SLOT_COUNT*SWAP_SECTORS_PER_PAGE;
+    if(end > UINT32_MAX){
+        return -1;
+    }
+    memset(swap_pages, 0, sizeof(swap_pages));
+    memset(swap_spaces, 0, sizeof(swap_spaces));
+    swap_first_sector = first_sector;
+    swap_ready = 1;
+    return 0;
+}
+
+/**
+ * @brief 寻找进程的换页地址空间
+ * 
+ * @param pgdir 根页表
+ * @param create 是否新建
+ * @return swap_space_t* 换页地址空间
+ */
+static swap_space_t *find_swap_space(uintptr_t pgdir, int create){
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        if(swap_spaces[i].pgdir == pgdir){
+            return &swap_spaces[i];
+        }
+    }
+    if(!create){
+        return NULL;
+    }
+    for(int i=0; i<NUM_MAX_TASK; ++i){
+        if(swap_spaces[i].pgdir == 0){
+            memset(&swap_spaces[i], 0, sizeof(swap_spaces[i]));
+            swap_spaces[i].pgdir = pgdir;
+            swap_spaces[i].pid = current_running->pid;
+            return &swap_spaces[i];
+        }
+    }
+    return NULL;
+}
+
+/**
+ * @brief 获得swap槽
+ * 
+ * @param pgdir 根页表
+ * @param va 虚地址
+ * @return int swap槽位号
+ */
+static int reserve_swap_page(uintptr_t pgdir, uintptr_t va){
+    int free_slot = -1;
+    for(int i=0; i<SWAP_SLOT_COUNT; ++i){
+        // 同一用户页不能重复创建
+        if(swap_pages[i].pgdir==pgdir && swap_pages[i].va==va){
+            return -1;
+        }
+        if(swap_pages[i].pgdir==0 && free_slot<0){
+            free_slot = i;
+        }
+    }
+    if(free_slot < 0){
+        return -1;
+    }
+    swap_pages[free_slot].pgdir = pgdir;
+    swap_pages[free_slot].va = va;
+    swap_pages[free_slot].frame = 0;
+    return free_slot;
+}
+
+// 从当前地址空间中选择换出页，返回可复用页框的kva
+static uintptr_t clock_evict(swap_space_t *space){
+    if(space->resident == 0){
+        return 0;
+    }
+
+    // 至多两圈
+    for(int scanned=0; scanned<2*SWAP_SLOT_COUNT; ++scanned){
+        int slot = space->hand;
+        space->hand = (space->hand+1)%SWAP_SLOT_COUNT;
+        swap_page_t *page = &swap_pages[slot];
+        if(page->pgdir!=space->pgdir || page->frame==0){
+            continue;
+        }
+
+        PTE *entry = walk_user_pte(page->pgdir, page->va, 0);
+        assert(entry!=NULL && (*entry&_PAGE_PRESENT));
+        assert(pa2kva(get_pa(*entry))==page->frame);
+        if(*entry&_PAGE_ACCESSED){ // clock: A=1，再给一次机会
+            *entry &= ~(uint64_t)_PAGE_ACCESSED;
+            local_flush_tlb_all();
+            continue;
+        }
+
+        PTE old_entry = *entry; // 暂存，便于恢复
+        *entry = make_swap_pte(slot); // 撤销用户映射
+        local_flush_tlb_all();
+        unsigned pa = (unsigned)kva2pa(page->frame);
+        if(bios_sd_write(pa, SWAP_SECTORS_PER_PAGE, swap_sector(slot)) < 0){
+            // 写盘失败，原数据仍在物理页中，恢复原映射
+            *entry = old_entry;
+            local_flush_tlb_all();
+            return 0;
+        }
+
+        uintptr_t frame = page->frame;
+        page->frame = 0;
+        space->resident--;
+        space->swap_outs++;
+
+        return frame;
+    }
+    return 0;
+}
+
+/**
+ * @brief 处理缺页情况，驻留页面未达上限则分配，其他情况使用clock换页
+ * 
+ * @param space 换页空间
+ * @return uintptr_t 页框号
+ */
+static uintptr_t obtain_swap_frame(swap_space_t *space){
+    if(space->resident < SWAP_RESIDENT_LIMIT){
+        uintptr_t frame = allocPage(1);
+        if(frame != 0){
+            return frame;
+        }
+    }
+    return clock_evict(space);
+}
+
+int swap_handle_fault(uintptr_t pgdir, uintptr_t va, uint64_t access){
+    if(!swap_ready || pgdir==0 || va>=USER_VA_LIMIT || current_running->pid==0 || pgdir!=current_running->pgdir){
+        return -1;
+    }
+    if(access!=_PAGE_READ && access!=_PAGE_WRITE){
+        return -1;
+    }
+    va = ROUNDDOWN(va, PAGE_SIZE);
+    PTE *entry = walk_user_pte(pgdir, va, 1);
+    if(entry == NULL){
+        return -1;
+    }
+    if(*entry&_PAGE_PRESENT){
+        return -1;
+    }
+
+    swap_space_t *space = find_swap_space(pgdir, 1);
+    if(space == NULL){
+        return -1;
+    }
+
+    int slot;
+    int from_disk = *entry!=0;
+
+    if(from_disk){ // 此处仅分配槽位
+        uint64_t encoded_slot = (uint64_t)get_pfn(*entry);
+        if(!(*entry&_PAGE_SWAPPED) || encoded_slot==0 || encoded_slot>SWAP_SLOT_COUNT){
+            return -1;
+        }
+        slot = (int)encoded_slot-1;
+        if(*entry != make_swap_pte(slot)){
+            return -1;
+        }
+
+        swap_page_t *page = &swap_pages[slot];
+        if(page->pgdir!=pgdir || page->va!=va || page->frame!=0){
+            return -1;
+        }
+    }else{
+        slot = reserve_swap_page(pgdir, va);
+        if(slot < 0){
+            return -1;
+        }
+    }
+
+    uintptr_t frame = obtain_swap_frame(space);
+    if(frame == 0){
+        if(!from_disk){
+            memset(&swap_pages[slot], 0, sizeof(swap_pages[slot]));
+        }
+        return -1;
+    }
+    if(from_disk){
+        unsigned pa = (unsigned)kva2pa(frame);
+        if(bios_sd_read(pa, SWAP_SECTORS_PER_PAGE, swap_sector(slot)) < 0){
+            freePage(frame);
+            return -1;
+        }
+    }else{
+        memset((void*)frame, 0, PAGE_SIZE); // 首次分配清零
+    }
+
+    swap_pages[slot].frame = frame;
+    space->resident++;
+    if(from_disk){
+        space->swap_ins++;
+    }
+
+    *entry = 0;
+    set_pfn(entry, kva2pa(frame)>>NORMAL_PAGE_SHIFT);
+    set_attribute(entry, _PAGE_PRESENT|_PAGE_USER|_PAGE_READ|
+                        _PAGE_WRITE|_PAGE_ACCESSED|_PAGE_DIRTY);
+    local_flush_tlb_all();
+    return 0;
+}
+
+// 清理软件记录及swap槽位
+void swap_forget_pgdir(uintptr_t pgdir){
+    swap_space_t *space = find_swap_space(pgdir, 0);
+
+#if SWAP_DEBUG
+    if(space != NULL){
+        printk("> [SWAP] pid=%d out=%lu in=%lu\n",
+               space->pid, space->swap_outs, space->swap_ins);
+    }
+#endif
+
+    for(int i=0; i<SWAP_SLOT_COUNT; ++i){
+        if(swap_pages[i].pgdir == pgdir){
+            memset(&swap_pages[i], 0, sizeof(swap_pages[i]));
+        }
+    }
+    if(space != NULL){
+        memset(space, 0, sizeof(*space));
+    }
 }
 
 uintptr_t shm_page_get(int key)

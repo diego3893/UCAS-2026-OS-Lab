@@ -179,20 +179,18 @@ void handle_page_fault(regs_context_t *regs, uint64_t stval, uint64_t scause){
         terminate_faulting_process(regs, stval, scause, "instruction page is not mapped");
         return;
     }
-    // 非0无效页，task2无换页，先报错
-    if(entry!=NULL && *entry!=0){
+    // // 非0无效页，task2无换页，先报错
+    // if(entry!=NULL && *entry!=0){
+    //     terminate_faulting_process(regs, stval, scause, "unsupported invalid PTE");
+    //     return;
+    // }
+    // task3: 带SWAPPED标记的无效PTE交给换入逻辑处理。
+    if(entry!=NULL && *entry!=0 && !(*entry&_PAGE_SWAPPED)){
         terminate_faulting_process(regs, stval, scause, "unsupported invalid PTE");
         return;
     }
-
-    if(alloc_page_helper(va, pgdir) == 0){
-        terminate_faulting_process(regs, stval, scause, "cannot allocate user page");
+    if(swap_handle_fault(pgdir, va, access) != 0){
+        terminate_faulting_process(regs, stval, scause, "cannot allocate or swap user page");
         return;
     }
-    entry = walk_user_pte(pgdir, va, 0);
-    assert(entry!=NULL && (*entry&_PAGE_PRESENT));
-
-    // 取消X权限
-    *entry &= ~(uint64_t)_PAGE_EXEC;
-    local_flush_tlb_all();
 }

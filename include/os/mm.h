@@ -72,6 +72,17 @@ extern uintptr_t alloc_page_helper(uintptr_t va, uintptr_t pgdir);
 PTE *walk_user_pte(uintptr_t pgdir, uintptr_t va, int create);
 void free_user_pgdir(uintptr_t pgdir);
 
+// P4-task3: Clock page replacement
+#define SWAP_RESIDENT_LIMIT 32 // 每个进程最多驻留32个页，多余的换出
+#define SWAP_SLOT_COUNT 1024
+#define SWAP_SECTORS_PER_PAGE (PAGE_SIZE/512)
+#define _PAGE_SWAPPED _PAGE_SOFT // V=0时，使用软件位表示该页已经换出
+#define SWAP_DEBUG 1 // 置1时，在回收地址空间时输出换入、换出次数
+
+int init_swap(uint32_t first_sector);
+int swap_handle_fault(uintptr_t pgdir, uintptr_t va, uint64_t access);
+void swap_forget_pgdir(uintptr_t pgdir);
+
 // TODO [P4-task4]: shm_page_get/dt */
 uintptr_t shm_page_get(int key);
 void shm_page_dt(uintptr_t addr);

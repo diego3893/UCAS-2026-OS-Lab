@@ -201,6 +201,20 @@ int main(void){
     uint32_t app_info_offset = *(volatile uint32_t*)pa2kva(0x502001f4UL);
     uint16_t tasknum_from_boot = *(volatile uint16_t*)pa2kva(0x502001faUL);
     int tasknum = init_task_info(app_info_offset, (int)tasknum_from_boot);
+    assert(tasknum>0 && tasknum<=TASK_MAXNUM);
+
+    // swap位于当前完整镜像之后，不能覆盖任务信息或用户程序
+    uint64_t image_end = (uint64_t)app_info_offset+(uint64_t)tasknum*sizeof(task_info_t);
+    for(int i=0; i<tasknum; ++i){
+        uint64_t task_end = (uint64_t)USER_IMAGE_START_SECTOR*SECTOR_SIZE+ tasks[i].task_offset+tasks[i].task_size;
+        if(task_end > image_end){
+            image_end = task_end;
+        }
+    }
+
+    uint64_t swap_start = (image_end+SECTOR_SIZE-1)/SECTOR_SIZE;
+    assert(swap_start<=UINT32_MAX);
+    assert(init_swap((uint32_t)swap_start)==0);
 
     // Read CPU frequency (｡•ᴗ-)_
     time_base = bios_read_fdt(TIMEBASE);
