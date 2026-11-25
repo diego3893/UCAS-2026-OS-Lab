@@ -46,11 +46,11 @@ int main(void)
         // TODO [P3-task1]: parse input
         // note: backspace maybe 8('\b') or 127(delete)
 
-        // TODO [P3-task1]: ps, exec, kill, clear   
+        // TODO [P3-task1]: ps, exec, kill, clear        
 
         /************************************************************/
         /* Do not touch this comment. Reserved for future projects. */
-        /************************************************************/     
+        /************************************************************/
     }
 
     return 0;

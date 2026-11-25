@@ -1,3 +1,29 @@
+/* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *  * * * * * * * * * * *
+ *            Copyright (C) 2018 Institute of Computing Technology, CAS
+ *               Author : Han Shukai (email : hanshukai@ict.ac.cn)
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *  * * * * * * * * * * *
+ *         The kernel's entry, where most of the initialization work is done.
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *  * * * * * * * * * * *
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy of this
+ * software and associated documentation files (the "Software"), to deal in the Software
+ * without restriction, including without limitation the rights to use, copy, modify,
+ * merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit
+ * persons to whom the Software is furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *  * * * * * * * * * * */
+
 #include <common.h>
 #include <asm.h>
 #include <asm/unistd.h>
@@ -10,8 +36,10 @@
 #include <os/string.h>
 #include <os/mm.h>
 #include <os/time.h>
+#include <os/ioremap.h>
 #include <sys/syscall.h>
 #include <screen.h>
+#include <e1000.h>
 #include <printk.h>
 #include <assert.h>
 #include <type.h>
@@ -90,17 +118,6 @@ static void init_syscall(void)
 }
 /************************************************************/
 
-/*
- * Once a CPU core calls this function,
- * it will stop executing!
- */
-static void kernel_brake(void)
-{
-    disable_interrupt();
-    while (1)
-        __asm__ volatile("wfi");
-}
-
 int main(void)
 {
     // Init jump table provided by kernel and bios(ΦωΦ)
@@ -113,8 +130,17 @@ int main(void)
     init_pcb();
     printk("> [INIT] PCB initialization succeeded.\n");
 
-    // Read CPU frequency (｡•ᴗ-)_
+    // Read Flatten Device Tree (｡•ᴗ-)_
     time_base = bios_read_fdt(TIMEBASE);
+    e1000 = (volatile uint8_t *)bios_read_fdt(EHTERNET_ADDR);
+    uint64_t plic_addr = bios_read_fdt(PLIC_ADDR);
+    uint32_t nr_irqs = (uint32_t)bios_read_fdt(NR_IRQS);
+    printk("> [INIT] e1000: %lx, plic_addr: %lx, nr_irqs: %lx.\n", e1000, plic_addr, nr_irqs);
+
+    // IOremap
+    plic_addr = (uintptr_t)ioremap((uint64_t)plic_addr, 0x4000 * NORMAL_PAGE_SIZE);
+    e1000 = (uint8_t *)ioremap((uint64_t)e1000, 8 * NORMAL_PAGE_SIZE);
+    printk("> [INIT] IOremap initialization succeeded.\n");
 
     // Init lock mechanism o(´^｀)o
     init_locks();
@@ -124,6 +150,14 @@ int main(void)
     init_exception();
     printk("> [INIT] Interrupt processing initialization succeeded.\n");
 
+    // TODO: [p5-task4] Init plic
+    // plic_init(plic_addr, nr_irqs);
+    // printk("> [INIT] PLIC initialized successfully. addr = 0x%lx, nr_irqs=0x%x\n", plic_addr, nr_irqs);
+
+    // Init network device
+    e1000_init();
+    printk("> [INIT] E1000 device initialized successfully.\n");
+
     // Init system call table (0_0)
     init_syscall();
     printk("> [INIT] System call initialized successfully.\n");
@@ -131,17 +165,6 @@ int main(void)
     // Init screen (QAQ)
     init_screen();
     printk("> [INIT] SCREEN initialization succeeded.\n");
-
-    /*
-     * Just start kernel with VM and print this string
-     * in the first part of task 1 of project 4.
-     * NOTE: if you use SMP, then every CPU core should call
-     *  `kernel_brake()` to stop executing!
-     */
-    printk("> [INIT] CPU #%u has entered kernel with VM!\n",
-        (unsigned int)get_current_cpu_id());
-    // TODO: [p4-task1 cont.] remove the brake and continue to start user processes.
-    kernel_brake();
 
     // TODO: [p2-task4] Setup timer interrupt and enable all interrupt globally
     // NOTE: The function of sstatus.sie is different from sie's
