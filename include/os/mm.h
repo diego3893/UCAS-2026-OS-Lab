@@ -73,7 +73,7 @@ PTE *walk_user_pte(uintptr_t pgdir, uintptr_t va, int create);
 void free_user_pgdir(uintptr_t pgdir);
 
 // P4-task3: Clock page replacement
-#define SWAP_RESIDENT_LIMIT 4 // 每个进程最多驻留32个页，多余的换出
+#define SWAP_RESIDENT_LIMIT 32 // 每个进程最多驻留32个页，多余的换出
 #define SWAP_SLOT_COUNT 1024
 #define SWAP_SECTORS_PER_PAGE (PAGE_SIZE/512)
 #define _PAGE_SWAPPED _PAGE_SOFT // V=0时，使用软件位表示该页已经换出
